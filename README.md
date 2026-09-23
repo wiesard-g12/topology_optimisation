@@ -30,10 +30,13 @@ Traditional Topology Optimization (SIMP) iteratively solves large finite element
 topo_opto/
 ├── dataset_generator.py     # Production SIMP dataset generation engine with multiprocessing
 ├── visualize_data.py        # 3-panel engineering visualizer (BCs, loads, and final density)
+├── visualize_evolution.py   # Multi-panel & animated GIF visualizer for optimization iterations
 ├── handover.md              # In-depth technical reference and mathematical derivations
 ├── topo_opti_project.pdf    # Project and course specification document
 ├── images/
-│   └── sample_000.png       # Sample engineering visualization output
+│   ├── sample_000.png       # Sample engineering visualization output
+│   ├── evolution_cantilever.png # Iteration snapshots (0, 10, 20... 80)
+│   └── evolution_cantilever.gif # Animated optimization progression
 └── .gitignore               # Ignored cache files, checkpoints, and data archives
 ```
 
@@ -45,7 +48,7 @@ topo_opto/
 
 Install dependencies:
 ```bash
-pip install numpy scipy matplotlib torch
+pip install numpy scipy matplotlib pillow torch
 ```
 
 ### 1. Generate Dataset
@@ -61,6 +64,18 @@ Inspect generated samples with boundary conditions, load vectors, and density fi
 ```bash
 python visualize_data.py --dataset topo_dataset.npz --num_visualizations 5 --output_dir images
 ```
+
+### 3. Visualize Optimization Evolution (Every 10 Iterations)
+
+Watch how SIMP iteratively removes low-strain material and forms triangulated Michell truss bars:
+```bash
+# Cantilever truss evolution
+python visualize_evolution.py --case cantilever --interval 10
+
+# MBB beam evolution
+python visualize_evolution.py --case mbb --interval 10
+```
+This generates high-resolution snapshot grids (at Iterations 0, 10, 20, ..., 80) with convergence curves and animated frame-by-frame GIFs.
 
 ---
 

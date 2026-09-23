@@ -79,8 +79,8 @@ def precompute_mesh_and_filter(nelx, nely, rmin):
     Hs = H.sum(axis=1).A1
     return edofMat, iK, jK, H, Hs
 
-# --- 3. CORE SIMP OPTIMIZATION SOLVER ---
-def solve_simp(nelx, nely, volfrac, penal, fixeddofs, F, edofMat, iK, jK, H, Hs, max_iter=80):
+def solve_simp(nelx, nely, volfrac, penal, fixeddofs, F, edofMat, iK, jK, H, Hs, max_iter=80,
+               record_history=False, history_interval=10):
     Emin = 1e-9
     Emax = 1.0
     ndof = 2 * (nelx + 1) * (nely + 1)
@@ -94,6 +94,15 @@ def solve_simp(nelx, nely, volfrac, penal, fixeddofs, F, edofMat, iK, jK, H, Hs,
     
     change = 1.0
     loop = 0
+    history = []
+    
+    if record_history:
+        history.append({
+            'iteration': 0,
+            'density': xPhys.reshape((nely, nelx), order='F').copy(),
+            'compliance': None,
+            'change': 1.0
+        })
     
     while change > 0.01 and loop < max_iter:
         loop += 1
@@ -104,16 +113,18 @@ def solve_simp(nelx, nely, volfrac, penal, fixeddofs, F, edofMat, iK, jK, H, Hs,
         try:
             U_free = spsolve(K_free, F[freedofs])
         except Exception:
-            return None
+            return (None, history) if record_history else None
             
         if np.any(np.isnan(U_free)) or np.any(np.isinf(U_free)):
-            return None
+            return (None, history) if record_history else None
             
         U = np.zeros(ndof)
         U[freedofs] = U_free
         
         U_edof = U[edofMat]
         ce = (np.dot(U_edof, KE) * U_edof).sum(axis=1)
+        compliance = float(np.sum((Emin + xPhys**penal * (Emax - Emin)) * ce))
+        
         dc = -penal * (Emax - Emin) * (xPhys**(penal - 1)) * ce
         dv = np.ones(nely * nelx)
         
@@ -136,7 +147,18 @@ def solve_simp(nelx, nely, volfrac, penal, fixeddofs, F, edofMat, iK, jK, H, Hs,
         x = xnew.copy()
         xPhys = x.copy()
         
-    return xPhys.reshape((nely, nelx), order='F')
+        if record_history and (loop % history_interval == 0 or loop == max_iter or change <= 0.01):
+            history.append({
+                'iteration': loop,
+                'density': xPhys.reshape((nely, nelx), order='F').copy(),
+                'compliance': compliance,
+                'change': change
+            })
+        
+    final_density = xPhys.reshape((nely, nelx), order='F')
+    if record_history:
+        return final_density, history
+    return final_density
 
 # Worker initializer for multiprocessing
 _worker_global_data = None
@@ -147,7 +169,8 @@ def init_worker(shared_data):
 
 # --- 4. PROBLEM SAMPLING (SOSNOVIK POISSON DISCRETE STRATEGY) ---
 def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=80,
-                   global_data=None, strategy='sosnovik'):
+                   global_data=None, strategy='sosnovik', record_history=False, history_interval=10,
+                   benchmark_type=None):
     """
     Generates a single training sample.
     Uses discrete point supports (pins/rollers) to create crisp, slender trusses
@@ -184,13 +207,13 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
 
     # 40% of samples: standard discrete structural benchmarks
     # 60% of samples: pure Sosnovik Poisson random configurations
-    use_benchmark = (rng.uniform() < 0.4)
+    use_benchmark = (rng.uniform() < 0.4) if benchmark_type is None else True
 
     fixed_nodes = []
     fixed_dofs = []
 
     if use_benchmark:
-        bm_type = rng.choice([0, 1, 2, 3])
+        bm_type = rng.choice([0, 1, 2, 3]) if benchmark_type is None else benchmark_type
         if bm_type == 0:  # Discrete Cantilever: 2 discrete pins on left edge
             n_top = get_nid(0, 0)
             n_bot = get_nid(0, nely)
@@ -266,12 +289,19 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
         Fy_grid[y, x] += fy
 
     # Run SIMP optimization
-    target_density = solve_simp(
+    simp_res = solve_simp(
         nelx, nely, volfrac, penal,
         np.unique(fixed_dofs), F,
         edofMat, iK, jK, H, Hs,
-        max_iter=max_iter
+        max_iter=max_iter,
+        record_history=record_history,
+        history_interval=history_interval
     )
+    if record_history:
+        target_density, history = simp_res
+    else:
+        target_density = simp_res
+
     if target_density is None:
         return None
 
@@ -299,7 +329,10 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
     ch_vf = np.full((nely, nelx), volfrac, dtype=np.float32)
 
     input_tensor = np.stack([ch_domain, ch_bc, ch_fx, ch_fy, ch_vf], axis=0).astype(np.float32)
+    if record_history:
+        return input_tensor, target_density.astype(np.float32), history
     return input_tensor, target_density.astype(np.float32)
+
 
 # --- 5. BATCH DATASET GENERATION PIPELINE ---
 def generate_dataset(num_samples=2000, output_path="topo_dataset.npz", num_cores=None,
