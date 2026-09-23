@@ -85,7 +85,11 @@ For full mathematical formulations, FEA derivations, benchmarking results, and P
 
 ---
 
-## Author
 
-- **Vedant Gupta** ([Vedantgupta070@gmail.com](mailto:Vedantgupta070@gmail.com))
+- Team Members:  
+Aditya Amodkar (CE23BTECH11004). 
+Ayush Dhakad (CE23BTECH11010). 
+Pushpraj Singh Khichi (CE23BTECH11043). 
+Vedant Gupta (CE23BTECH11059).  
+
 - GitHub: [@wiesard-g12](https://github.com/wiesard-g12)
