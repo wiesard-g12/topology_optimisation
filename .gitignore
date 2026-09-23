@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch and temporary checkpoints
+*.pt
+*.pth
+
+# Large generated dataset archives (keep test_dataset.npz for testing)
+topo_dataset.npz
+
+# Virtual environments
+.env/
+env/
+venv/
+ENV/
+
+# IDE & Editor folders
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
