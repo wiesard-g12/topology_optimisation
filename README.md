@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A high-performance pipeline for generating structural topology optimization datasets using the **Solid Isotropic Material with Penalization (SIMP)** method, tailored for training deep learning models (e.g., U-Net) to predict optimal topologies in real-time (< 10 ms).
+A high-performance pipeline for generating structural topology optimization datasets using the **Solid Isotropic Material with Penalization (SIMP)** method, tailored for training deep learning models (e.g., U-Net) to predict optimal topologies in real-time (< 30 ms).
 
 ![Sample Visualization](images/sample_000.png)
 
