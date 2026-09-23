@@ -289,6 +289,7 @@ def solve_inplane_buckling(U, xPhys, edofMat, fixeddofs, nelx, nely,
             "eigenvalues": [999.0],
             "critical_factor": 999.0,
             "mode_shapes": np.zeros((1, 2, nely + 1, nelx + 1)),
+            "phi_vector": np.zeros(ndof),
             "status": "Pure Tension (No Buckling Possible)"
         }
         
@@ -311,6 +312,7 @@ def solve_inplane_buckling(U, xPhys, edofMat, fixeddofs, nelx, nely,
                     "eigenvalues": [999.0],
                     "critical_factor": 999.0,
                     "mode_shapes": np.zeros((1, 2, nely + 1, nelx + 1)),
+                    "phi_vector": np.zeros(ndof),
                     "status": "Stable (No Compressive Instability)"
                 }
                 
@@ -341,6 +343,7 @@ def solve_inplane_buckling(U, xPhys, edofMat, fixeddofs, nelx, nely,
                 "phi_u": phi_u,
                 "phi_v": phi_v,
                 "phi_mag": phi_mag,
+                "phi_vector": phi_full,
                 "status": "Solved"
             }
             
@@ -350,6 +353,7 @@ def solve_inplane_buckling(U, xPhys, edofMat, fixeddofs, nelx, nely,
             "eigenvalues": [1.0],
             "critical_factor": 1.0,
             "phi_mag": np.zeros((nely + 1, nelx + 1)),
+            "phi_vector": np.zeros(ndof),
             "status": f"Solver Warning: {str(ex)}"
         }
 

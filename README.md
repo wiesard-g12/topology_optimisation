@@ -100,6 +100,20 @@ This solves the 2D stress tensor and the generalized eigenvalue problem $(\mathb
 - 2D In-Plane Buckling Mode Shape & Critical Load Multiplier $\lambda_1$
 - Yielding Factor of Safety (FoS) and definitive PASS / FAIL structural verdicts.
 
+### 5. Active Buckling-Aware Topology Optimization (25-Iteration Budget)
+
+Actively reinforce compression struts against in-plane buckling within a fast 25-iteration computational budget:
+```bash
+# Compare Pure Compliance SIMP vs Buckling-Aware SIMP on Structural Steel
+python compare_buckling_optimization.py --sample-index 0 --material steel --force 1500 --buckle-weight 0.45
+
+# Compare on Aluminum 6061-T6 with custom volume fraction
+python compare_buckling_optimization.py --sample-index 1 --material aluminum --force 1000 --volfrac 0.3 --buckle-weight 0.50
+```
+- **Warm-start schedule:** Iterations 1–14 run standard compliance SIMP to discover macro-truss topology; iterations 15–25 activate modal strain energy sensitivities to thicken compression members against geometric stiffness $\mathbf{K}_G$.
+- **Speed:** Solves in $< 2.5\text{ seconds}$ per design.
+- **Output:** Automatically exports side-by-side topology comparison, material redistribution maps ($\Delta \rho$), and structural performance metrics.
+
 ---
 
 ## Detailed Documentation
