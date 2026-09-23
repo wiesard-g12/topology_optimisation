@@ -170,7 +170,7 @@ def init_worker(shared_data):
 # --- 4. PROBLEM SAMPLING (SOSNOVIK POISSON DISCRETE STRATEGY) ---
 def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=80,
                    global_data=None, strategy='sosnovik', record_history=False, history_interval=10,
-                   benchmark_type=None):
+                   benchmark_type=None, return_meta=False):
     """
     Generates a single training sample.
     Uses discrete point supports (pins/rollers) to create crisp, slender trusses
@@ -329,7 +329,19 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
     ch_vf = np.full((nely, nelx), volfrac, dtype=np.float32)
 
     input_tensor = np.stack([ch_domain, ch_bc, ch_fx, ch_fy, ch_vf], axis=0).astype(np.float32)
-    if record_history:
+    meta = {
+        'fixed_dofs': np.unique(fixed_dofs),
+        'fixed_nodes': fixed_nodes,
+        'F': F,
+        'volfrac': volfrac,
+        'nelx': nelx,
+        'nely': nely
+    }
+    if return_meta and record_history:
+        return input_tensor, target_density.astype(np.float32), history, meta
+    elif return_meta:
+        return input_tensor, target_density.astype(np.float32), meta
+    elif record_history:
         return input_tensor, target_density.astype(np.float32), history
     return input_tensor, target_density.astype(np.float32)
 
