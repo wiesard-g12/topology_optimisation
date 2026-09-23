@@ -28,16 +28,21 @@ Traditional Topology Optimization (SIMP) iteratively solves large finite element
 
 ```
 topo_opto/
-├── dataset_generator.py     # Production SIMP dataset generation engine with multiprocessing
-├── visualize_data.py        # 3-panel engineering visualizer (BCs, loads, and final density)
-├── visualize_evolution.py   # Multi-panel & animated GIF visualizer for optimization iterations
-├── handover.md              # In-depth technical reference and mathematical derivations
-├── topo_opti_project.pdf    # Project and course specification document
+├── dataset_generator.py          # Production SIMP dataset generation engine with multiprocessing
+├── structural_mechanics.py       # 2D stress recovery, geometric stiffness KG, and eigenvalue buckling
+├── stress_buckling_analyzer.py   # 4-panel structural integrity & buckling verification inspector
+├── visualize_data.py             # 3-panel engineering visualizer (BCs, loads, and final density)
+├── visualize_evolution.py        # Multi-panel & animated GIF visualizer for optimization iterations
+├── generate_iteration_visualizations.py # 3-panel snapshots for iterations 10, 20... 80
+├── handover.md                   # In-depth technical reference and mathematical derivations
+├── topo_opti_project.pdf         # Project and course specification document
 ├── images/
-│   ├── sample_000.png       # Sample engineering visualization output
-│   ├── evolution_cantilever.png # Iteration snapshots (0, 10, 20... 80)
-│   └── evolution_cantilever.gif # Animated optimization progression
-└── .gitignore               # Ignored cache files, checkpoints, and data archives
+│   ├── sample_000.png            # Sample engineering visualization output
+│   ├── structural_report_sample_000_steel.png    # 4-panel structural health report (Steel)
+│   ├── structural_report_sample_000_aluminum.png # 4-panel structural health report (Aluminum)
+│   ├── evolution_cantilever.png  # Iteration snapshots (0, 10, 20... 80)
+│   └── evolution_cantilever.gif  # Animated optimization progression
+└── .gitignore                    # Ignored cache files, checkpoints, and data archives
 ```
 
 ---
@@ -76,6 +81,24 @@ python visualize_evolution.py --case cantilever --interval 10
 python visualize_evolution.py --case mbb --interval 10
 ```
 This generates high-resolution snapshot grids (at Iterations 0, 10, 20, ..., 80) with convergence curves and animated frame-by-frame GIFs.
+
+### 4. Real-World Structural Integrity & In-Plane Buckling Inspection
+
+Verify that the optimized truss architecture sustains real forces without yielding or in-plane buckling:
+```bash
+# Structural Steel inspection (1,500 N working load)
+python stress_buckling_analyzer.py --sample_id 0 --material steel --force 1500
+
+# Aerospace Aluminum 6061-T6 inspection
+python stress_buckling_analyzer.py --sample_id 0 --material aluminum --force 1500
+
+# 3D-Printed PETG / Carbon PLA inspection
+python stress_buckling_analyzer.py --sample_id 0 --material petg --force 300
+```
+This solves the 2D stress tensor and the generalized eigenvalue problem $(\mathbf{K} - \lambda_1 \mathbf{K}_G)\mathbf{\phi}_1 = \mathbf{0}$, generating a 4-panel engineering health certificate with:
+- Von Mises Stress Heatmap (MPa) with peak stress callouts
+- 2D In-Plane Buckling Mode Shape & Critical Load Multiplier $\lambda_1$
+- Yielding Factor of Safety (FoS) and definitive PASS / FAIL structural verdicts.
 
 ---
 
