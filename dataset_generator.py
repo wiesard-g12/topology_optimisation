@@ -348,26 +348,44 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
 
 # --- 5. BATCH DATASET GENERATION PIPELINE ---
 def generate_dataset(num_samples=2000, output_path="topo_dataset.npz", num_cores=None,
-                     seed_start=0, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=80):
+                     seed_start=0, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=80,
+                     append=False):
     if num_cores is None:
         num_cores = max(1, mp.cpu_count() - 1)
         
-    print(f"============================================================")
-    print(f"  SIMP Dataset Generator (Sosnovik Discrete Truss Pipeline) ")
-    print(f"  Target: {num_samples} samples | Domain: {nelx}x{nely} | Cores: {num_cores}")
-    print(f"  Volume Fraction: Normal(0.42, 0.08) in [0.22, 0.55]")
-    print(f"  Output File: {os.path.abspath(output_path)}")
-    print(f"============================================================")
-    
-    t_start = time.time()
-    print("Precomputing mesh geometry and sensitivity filter matrix...")
-    global_data = precompute_mesh_and_filter(nelx, nely, rmin)
-    t_filter = time.time() - t_start
-    print(f"Filter matrix precomputed in {t_filter:.2f}s.")
-    
     all_inputs = []
     all_targets = []
     current_seed = seed_start
+
+    # If append requested and file exists, load existing samples
+    if append and os.path.exists(output_path):
+        try:
+            existing = np.load(output_path)
+            all_inputs = list(existing['inputs'])
+            all_targets = list(existing['targets'])
+            current_seed = seed_start + len(all_inputs)
+            print(f"Loaded {len(all_inputs)} existing samples from {output_path}. Resuming at seed {current_seed}...", flush=True)
+        except Exception as e:
+            print(f"Warning: Could not read existing dataset for append: {e}", flush=True)
+
+    print(f"============================================================", flush=True)
+    print(f"  SIMP Dataset Generator (Sosnovik Discrete Truss Pipeline) ", flush=True)
+    print(f"  Target: {num_samples} samples | Domain: {nelx}x{nely} | Cores: {num_cores}", flush=True)
+    print(f"  Current Progress: {len(all_inputs)}/{num_samples} samples", flush=True)
+    print(f"  Volume Fraction: Normal(0.42, 0.08) in [0.22, 0.55]", flush=True)
+    print(f"  Output File: {os.path.abspath(output_path)}", flush=True)
+    print(f"============================================================", flush=True)
+    
+    if len(all_inputs) >= num_samples:
+        print(f"Target count {num_samples} already satisfied ({len(all_inputs)} samples present).", flush=True)
+        return
+
+    t_start = time.time()
+    print("Precomputing mesh geometry and sensitivity filter matrix...", flush=True)
+    global_data = precompute_mesh_and_filter(nelx, nely, rmin)
+    t_filter = time.time() - t_start
+    print(f"Filter matrix precomputed in {t_filter:.2f}s.", flush=True)
+    
     batch_size = num_cores * 2
     
     with mp.Pool(processes=num_cores, initializer=init_worker, initargs=(global_data,)) as pool:
@@ -381,28 +399,30 @@ def generate_dataset(num_samples=2000, output_path="topo_dataset.npz", num_cores
             ]
             results = pool.starmap(sample_problem, task_args)
             
+            new_added = 0
             for res in results:
                 if res is not None:
                     inp, tgt = res
                     all_inputs.append(inp)
                     all_targets.append(tgt)
+                    new_added += 1
                     if len(all_inputs) >= num_samples:
                         break
                         
+            # Auto-save after each batch to prevent data loss
+            inputs_arr = np.stack(all_inputs, axis=0)
+            targets_arr = np.stack(all_targets, axis=0)
+            np.savez_compressed(output_path, inputs=inputs_arr, targets=targets_arr)
+            
             elapsed = time.time() - t_start
             rate = len(all_inputs) / elapsed if elapsed > 0 else 0
             remaining = (num_samples - len(all_inputs)) / rate if rate > 0 else 0
-            print(f"Progress: {len(all_inputs)}/{num_samples} samples generated "
-                  f"({rate:.2f} samples/s, ETA: {remaining/60:.1f} min)")
+            print(f"Progress: {len(all_inputs)}/{num_samples} samples saved "
+                  f"({rate:.2f} samples/s, ETA: {remaining/60:.1f} min)", flush=True)
                   
-    inputs_arr = np.stack(all_inputs, axis=0)
-    targets_arr = np.stack(all_targets, axis=0)
-    
-    print(f"Saving dataset arrays: Inputs {inputs_arr.shape}, Targets {targets_arr.shape}...")
-    np.savez_compressed(output_path, inputs=inputs_arr, targets=targets_arr)
     total_time = time.time() - t_start
-    print(f"Dataset successfully created in {total_time:.2f}s ({total_time/60:.2f} min).")
-    print(f"File saved: {os.path.abspath(output_path)}")
+    print(f"Dataset successfully created in {total_time:.2f}s ({total_time/60:.2f} min).", flush=True)
+    print(f"File saved: {os.path.abspath(output_path)}", flush=True)
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-core SIMP Dataset Generator")
@@ -413,6 +433,7 @@ def main():
     parser.add_argument("--nelx", type=int, default=120, help="Mesh width")
     parser.add_argument("--nely", type=int, default=60, help="Mesh height")
     parser.add_argument("--max_iter", type=int, default=80, help="Max SIMP iterations per sample")
+    parser.add_argument("--append", action="store_true", help="Append / resume existing dataset file")
     args = parser.parse_args()
     
     generate_dataset(
@@ -422,7 +443,8 @@ def main():
         seed_start=args.seed_start,
         nelx=args.nelx,
         nely=args.nely,
-        max_iter=args.max_iter
+        max_iter=args.max_iter,
+        append=args.append
     )
 
 if __name__ == '__main__':

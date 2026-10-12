@@ -6,8 +6,10 @@ __pycache__/
 # PyTorch and temporary checkpoints
 *.pt
 *.pth
+!checkpoints/best_unet.pth
+checkpoints/latest_unet.pth
 
-# Large generated dataset archives (keep test_dataset.npz for testing)
+# Large generated dataset archives (keep test_dataset.npz and topo_dataset_1000.npz)
 topo_dataset.npz
 
 # Virtual environments

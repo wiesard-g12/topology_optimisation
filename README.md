@@ -28,7 +28,12 @@ Traditional Topology Optimization (SIMP) iteratively solves large finite element
 
 ```
 topo_opto/
-├── dataset_generator.py          # Production SIMP dataset generation engine with multiprocessing
+├── dataset_generator.py          # Production SIMP dataset generator with multiprocessing & auto-save
+├── unet_model.py                 # Phase 2: 4-level U-Net architecture (TopoUNet, 6.01M params)
+├── losses.py                     # Phase 2: Physics-informed composite loss (BCE + Dice + Vf + Binarization)
+├── dataset.py                    # Phase 2: PyTorch Dataset with vector-preserving reflections
+├── train_unet.py                 # Phase 2: End-to-end training pipeline with validation & scheduler
+├── predict_unet.py               # Phase 2: Real-time inference benchmark & 5-panel visualizer
 ├── structural_mechanics.py       # 2D stress recovery, geometric stiffness KG, and eigenvalue buckling
 ├── stress_buckling_analyzer.py   # 4-panel structural integrity & buckling verification inspector
 ├── visualize_data.py             # 3-panel engineering visualizer (BCs, loads, and final density)
@@ -36,12 +41,7 @@ topo_opto/
 ├── generate_iteration_visualizations.py # 3-panel snapshots for iterations 10, 20... 80
 ├── handover.md                   # In-depth technical reference and mathematical derivations
 ├── topo_opti_project.pdf         # Project and course specification document
-├── images/
-│   ├── sample_000.png            # Sample engineering visualization output
-│   ├── structural_report_sample_000_steel.png    # 4-panel structural health report (Steel)
-│   ├── structural_report_sample_000_aluminum.png # 4-panel structural health report (Aluminum)
-│   ├── evolution_cantilever.png  # Iteration snapshots (0, 10, 20... 80)
-│   └── evolution_cantilever.gif  # Animated optimization progression
+├── images/                       # Saved engineering plots and comparison figures
 └── .gitignore                    # Ignored cache files, checkpoints, and data archives
 ```
 
@@ -113,6 +113,58 @@ python compare_buckling_optimization.py --sample-index 1 --material aluminum --f
 - **Warm-start schedule:** Iterations 1–14 run standard compliance SIMP to discover macro-truss topology; iterations 15–25 activate modal strain energy sensitivities to thicken compression members against geometric stiffness $\mathbf{K}_G$.
 - **Speed:** Solves in $< 2.5\text{ seconds}$ per design.
 - **Output:** Automatically exports side-by-side topology comparison, material redistribution maps ($\Delta \rho$), and structural performance metrics.
+
+### 6. Phase 2: Deep Learning U-Net Training & Real-Time Inference (< 15 ms)
+
+Train the 4-level physics-guided U-Net to predict optimal material layout directly in a single forward pass:
+```bash
+# 1. Train TopoUNet on generated SIMP dataset
+python train_unet.py --dataset topo_dataset_1000.npz --epochs 50 --batch_size 16 --lr 1e-3 --save_dir checkpoints
+
+# 2. Benchmark inference latency & render 5-panel engineering comparisons
+python predict_unet.py --checkpoint checkpoints/best_unet.pth --dataset topo_dataset_1000.npz --output_dir images --num_viz 5
+```
+- **Inputs:** 5-channel physics tensor `(B, 5, 60, 120)`: Solid Domain, Discrete BCs, $F_x$, $F_y$, Target $V_f$.
+- **Outputs:** Continuous density field $\hat{\mathbf{y}} \in [0, 1]^{60 \times 120}$.
+- **Loss formulation:** Multi-objective loss $\mathcal{L} = \mathcal{L}_{\text{BCE}} + 0.5 \mathcal{L}_{\text{Dice}} + 10.0 (\text{mean}(\hat{\mathbf{y}}) - V_f)^2 + \beta \sum \hat{y}_e (1 - \hat{y}_e)$.
+- **Speed:** Replaces iterative FEM loop (~60 seconds) with an instantaneous forward pass taking **$< 15\text{ ms}$** on GPU and **$< 36\text{ ms}$** on CPU.
+
+### 7. Interactive Real-Time Demo (Web & CLI)
+
+Experience real-time U-Net topology prediction with live parameter controls:
+
+```bash
+# Web-based interactive GUI (zero external web dependencies, pure Python standard library)
+python demo_server.py --port 5000 --checkpoint checkpoints/best_unet.pth --dataset topo_dataset_1000.npz
+# Open http://localhost:5000 in your browser!
+
+# CLI interactive runner for standard engineering cases:
+python interactive_demo.py --case cantilever --vf 0.40 --checkpoint checkpoints/best_unet.pth
+python interactive_demo.py --case mbb --vf 0.50 --checkpoint checkpoints/best_unet.pth
+python interactive_demo.py --case bridge --vf 0.35 --checkpoint checkpoints/best_unet.pth
+python interactive_demo.py --case crane --vf 0.45 --checkpoint checkpoints/best_unet.pth
+```
+
+### 8. Comprehensive U-Net Visualization Tool (`visualize_unet.py`)
+
+A multi-mode visualization suite for in-depth engineering analysis:
+
+```bash
+# Mode 1: 6-Panel Engineering Comparison (Loads, SIMP Ground Truth, U-Net, Binarized, Error, Histogram)
+python visualize_unet.py --mode comparison --sample_idx 1 --checkpoint checkpoints/best_unet.pth --dataset topo_dataset_1000.npz
+
+# Mode 2: Real-time Volume Fraction Parameter Sweep (Vf = 0.25, 0.35, 0.45, 0.55)
+python visualize_unet.py --mode sweep_vf --case cantilever --checkpoint checkpoints/best_unet.pth
+
+# Mode 3: Threshold Sensitivity Curve (τ in [0.1, 0.9])
+python visualize_unet.py --mode sweep_threshold --sample_idx 1 --checkpoint checkpoints/best_unet.pth --dataset topo_dataset_1000.npz
+
+# Mode 4: Plane Stress Recovery & FoS Inspection (Von Mises stress, max deflection, factor of safety)
+python visualize_unet.py --mode stress --sample_idx 1 --material steel --checkpoint checkpoints/best_unet.pth --dataset topo_dataset_1000.npz
+
+# Mode 5: Batch Statistical Scorecard (Dice distribution, Vf parity, MSE, latency histogram)
+python visualize_unet.py --mode batch --checkpoint checkpoints/best_unet.pth --dataset topo_dataset_1000.npz --num_eval 200
+```
 
 ---
 
