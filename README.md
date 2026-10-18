@@ -5,8 +5,6 @@
 
 A high-performance pipeline for generating structural topology optimization datasets using the **Solid Isotropic Material with Penalization (SIMP)** method, tailored for training deep learning models (e.g., U-Net) to predict optimal topologies in real-time (< 30 ms).
 
-![Sample Visualization](images/sample_000.png)
-
 ---
 
 ## Overview
@@ -28,21 +26,26 @@ Traditional Topology Optimization (SIMP) iteratively solves large finite element
 
 ```
 topo_opto/
-├── dataset_generator.py          # Production SIMP dataset generator with multiprocessing & auto-save
-├── unet_model.py                 # Phase 2: 4-level U-Net architecture (TopoUNet, 6.01M params)
-├── losses.py                     # Phase 2: Physics-informed composite loss (BCE + Dice + Vf + Binarization)
-├── dataset.py                    # Phase 2: PyTorch Dataset with vector-preserving reflections
-├── train_unet.py                 # Phase 2: End-to-end training pipeline with validation & scheduler
-├── predict_unet.py               # Phase 2: Real-time inference benchmark & 5-panel visualizer
-├── structural_mechanics.py       # 2D stress recovery, geometric stiffness KG, and eigenvalue buckling
-├── stress_buckling_analyzer.py   # 4-panel structural integrity & buckling verification inspector
-├── visualize_data.py             # 3-panel engineering visualizer (BCs, loads, and final density)
-├── visualize_evolution.py        # Multi-panel & animated GIF visualizer for optimization iterations
-├── generate_iteration_visualizations.py # 3-panel snapshots for iterations 10, 20... 80
-├── handover.md                   # In-depth technical reference and mathematical derivations
-├── topo_opti_project.pdf         # Project and course specification document
-├── images/                       # Saved engineering plots and comparison figures
-└── .gitignore                    # Ignored cache files, checkpoints, and data archives
+├── dataset_generator.py            # Phase 1: SIMP dataset generator with multiprocessing & auto-save
+├── visualize_data.py               # Phase 1: 3-panel engineering visualizer (BCs, loads, density)
+├── visualize_evolution.py          # Phase 1: Multi-panel & animated GIF visualizer for SIMP iterations
+├── unet_model.py                   # Phase 2: 4-level U-Net architecture (TopoUNet, 6.01M params)
+├── losses.py                       # Phase 2: Physics-informed composite loss (BCE + Dice + Vf + Bin)
+├── dataset.py                      # Phase 2: PyTorch Dataset with vector-preserving reflections
+├── train_unet.py                   # Phase 2: End-to-end training pipeline with validation & scheduler
+├── predict_unet.py                 # Phase 2: Real-time inference benchmark & 5-panel visualizer
+├── visualize_unet.py               # Phase 2: 5-mode advanced U-Net diagnostic & stress visualizer
+├── interactive_demo.py             # Phase 2: CLI real-time benchmark & dataset sample runner
+├── demo_server.py                  # Phase 2: Browser-based interactive real-time web application
+├── structural_mechanics.py         # 2D stress recovery, geometric stiffness KG, and eigenvalue buckling
+├── buckling_optimizer.py           # Active buckling-aware SIMP topology optimizer
+├── stress_buckling_analyzer.py     # 4-panel structural integrity & buckling verification inspector
+├── compare_buckling_optimization.py# Head-to-head comparison: pure compliance vs buckling-aware SIMP
+├── checkpoints/best_unet.pth       # Trained TopoUNet production weights
+├── topo_dataset_1000.npz           # 1,000-sample verified SIMP ground-truth dataset
+├── handover.md                     # In-depth technical reference and mathematical derivations
+├── topo_opti_project.pdf           # Project and course specification document
+└── .gitignore                      # Ignored cache files, temporary logs, and transient outputs
 ```
 
 ---

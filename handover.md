@@ -22,36 +22,55 @@ Traditional Topology Optimization (SIMP) takes minutes per design because it ite
 6. Conducted a deep codebase cleanup, purging all obsolete prototypes, temporary test files, and old image dumps.
 
 ### Q3: What is the structure of the codebase?
-The repository has been streamlined to a clean, minimal core:
+The repository has been streamlined to a clean, modular production core:
 ```
 topo_opto/
-├── .gitignore               # Standard gitignore (caches, checkpoints, data dumps)
-├── dataset_generator.py     # Production SIMP dataset generation engine with multiprocessing
-├── visualize_data.py        # Professional 3-panel engineering visualizer (creates images/ on-demand)
-├── handover.md              # Definitive technical reference & handover report (this file)
-└── topo_opti_project.pdf    # Original course & project requirements specification
+├── dataset_generator.py             # Phase 1: SIMP dataset generation engine with multiprocessing
+├── visualize_data.py                # Phase 1: 3-panel engineering visualizer
+├── visualize_evolution.py           # Phase 1: Iteration snapshot & convergence visualizer
+├── unet_model.py                    # Phase 2: 4-level TopoUNet architecture (6.01M params)
+├── losses.py                        # Phase 2: Physics-informed composite loss
+├── dataset.py                       # Phase 2: PyTorch Dataset with vector-preserving reflections
+├── train_unet.py                    # Phase 2: Training pipeline
+├── predict_unet.py                  # Phase 2: Real-time inference benchmark & evaluator
+├── visualize_unet.py                # Phase 2: 5-mode advanced U-Net engineering visualizer
+├── interactive_demo.py              # Phase 2: CLI real-time benchmark & sample demo runner
+├── demo_server.py                   # Phase 2: Interactive browser web dashboard
+├── structural_mechanics.py          # 2D stress recovery, geometric stiffness KG, eigenvalue buckling
+├── buckling_optimizer.py            # Active buckling-aware SIMP optimizer
+├── stress_buckling_analyzer.py      # 4-panel structural integrity & buckling inspector
+├── compare_buckling_optimization.py # Pure compliance vs buckling-aware SIMP comparison
+├── checkpoints/best_unet.pth        # Trained TopoUNet production checkpoint
+├── topo_dataset_1000.npz            # Verified 1,000-sample SIMP ground-truth dataset
+├── handover.md                      # Definitive technical reference & handover report (this file)
+├── README.md                        # Quickstart & usage documentation
+├── topo_opti_project.pdf            # Original course & project requirements specification
+└── .gitignore                       # Standard gitignore (caches, temporary checkpoints, images)
 ```
 
 ### Q4: What all did we use?
-- **Theory & Algorithms:** SIMP material penalization ($p=3.0$), 2D 4-node bilinear quadrilateral ($Q_4$) FEA, Sigmund/Bourdin mesh-independency sensitivity filtering ($r_{\min}=1.5$), Optimality Criteria (OC) with 1D bisection ($m=0.2$), Poisson discrete fixture sampling (Sosnovik & Oseledets 2019).
-- **Libraries & Environment:** Python 3.13, NumPy 2.2, SciPy 1.15 (`scipy.sparse`, `scipy.sparse.linalg.spsolve`, `scipy.ndimage`), Matplotlib 3.10, Python `multiprocessing`, PyTorch 2.10.
+- **Theory & Algorithms:** SIMP material penalization ($p=3.0$), 2D 4-node bilinear quadrilateral ($Q_4$) FEA, Sigmund/Bourdin mesh-independency sensitivity filtering ($r_{\min}=1.5$), Optimality Criteria (OC) with 1D bisection ($m=0.2$), Poisson discrete fixture sampling (Sosnovik & Oseledets 2019), 4-level Encoder-Decoder U-Net (`TopoUNet`), 2D Geometric Stiffness ($\mathbf{K}_G$) & generalized eigenvalue buckling.
+- **Libraries & Environment:** Python 3.13, NumPy 2.2, SciPy 1.15 (`scipy.sparse`, `scipy.sparse.linalg.spsolve`, `scipy.sparse.linalg.eigs`, `scipy.ndimage`), Matplotlib 3.10, Python `multiprocessing`, PyTorch 2.10.
 - **Key Literature:** Andreassen et al. (2011) DTU 88-line benchmark, Aage & Johansen (2013) Python SIMP, Sosnovik & Oseledets (2019) Deep Learning TO, Bendsøe & Sigmund (2003).
 
 ### Q5: What was removed in the cleanup and why?
-- `images/`: Cleared old image plots so fresh figures can be generated on-demand.
-- `test_simp.py`, `top88.py`, `generate_paper_visualization.py`: One-off benchmarks and unit tests removed once the core solver was verified.
-- `test_sosnovik_generator.py`, `create_sampling_comparison.py`, `create_literature_pipeline_figure.py`: Experimental prototypes and single-run figure scripts removed.
-- `test_dataset.npz`, `topo_dataset.npz`: Temporary and incomplete test dataset dumps purged for fresh generation.
-- `__pycache__/`: Stale `.pyc` caches cleared.
+- `images/`: All generated sample images, iteration snapshots, and GIFs removed so the workspace starts clean for the next phase (regenerated on-demand by any visualization script).
+- One-off figure scripts (`generate_50iter_buckling_comparison.py`, `generate_side_by_side_50iter.py`, `generate_iteration_visualizations.py`, `generate_unet_diagram.py`, `simulate_optimization_evolution.py`, `train_and_evaluate_pipeline.py`): Removed redundant single-purpose scripts whose capabilities are cleanly covered by the core modules.
+- Temporary data & checkpoint files (`topo_dataset.npz`, `results_50iter_sample_000.npz`, `checkpoints/latest_unet.pth`, `checkpoints/training_curves.png`, `checkpoints/training_history.json`): Removed temporary/duplicate artifacts while retaining `topo_dataset_1000.npz` and `checkpoints/best_unet.pth`.
+- `__pycache__/`: Cleared compiled `.pyc` bytecode caches.
 
 ### Q6: How to run?
-- **To generate 2,000 samples:**
+- **To generate samples:**
   ```powershell
-  python dataset_generator.py --num_samples 2000 --output topo_dataset.npz --cores 11
+  python dataset_generator.py --num_samples 1000 --output topo_dataset_1000.npz --cores 11
   ```
 - **To visualize samples from the dataset:**
   ```powershell
-  python visualize_data.py --dataset topo_dataset.npz --output_dir images --max_samples 10
+  python visualize_data.py --dataset topo_dataset_1000.npz --output_dir images --max_samples 5
+  ```
+- **To launch the real-time interactive web demo:**
+  ```powershell
+  python demo_server.py --port 5000 --checkpoint checkpoints/best_unet.pth --dataset topo_dataset_1000.npz
   ```
 
 ---
@@ -65,13 +84,13 @@ topo_opto/
 6. [Bug Fixes & Technical Breakthroughs](#6-bug-fixes--technical-breakthroughs)
 7. [Data Pipeline & 5-Channel U-Net Representation](#7-data-pipeline--5-channel-u-net-representation)
 8. [Step-by-Step Execution Guide (How to run?)](#8-step-by-step-execution-guide-how-to-run)
-9. [Phase 2 & Phase 3 Roadmap (Deep Learning & U-Net Training)](#9-phase-2--phase-3-roadmap-deep-learning--u-net-training)
+9. [Phase 2 Implementation & Phase 3 Roadmap](#9-phase-2-implementation--phase-3-roadmap)
 
 ---
 
 ## 1. Executive Summary (What did we do?)
 
-In Phase 1 of this project, we designed, debugged, and validated an end-to-end synthetic data generation pipeline for structural topology optimization. Specifically:
+In Phases 1 & 2 of this project, we designed, debugged, and validated an end-to-end synthetic data generation and deep learning topology optimization pipeline:
 
 1. **Diagnosed and Resolved Critical FEM & SIMP Bugs:**
    - Fixed an inverted degree-of-freedom ordering bug in `edofMat` ($Q_4$ bilinear quad elements) that previously caused a 35.7% error in the global stiffness matrix and produced non-physical, distorted topologies.
@@ -87,14 +106,15 @@ In Phase 1 of this project, we designed, debugged, and validated an end-to-end s
      - Kinematic stability enforcement (guaranteeing non-collinear pin/roller support pairs separated by $\ge 15$ elements to eliminate singular stiffness matrices).
    - This physically forces the SIMP optimizer to build **slender, triangulated Michell truss bars with hollow interior voids**.
 
-3. **Built an Engineering-Grade Visualizer (`visualize_data.py`):**
-   - Automatically clusters element load arrays to reconstruct discrete load application points, draws unclipped engineering load vectors with magnitudes and angles, renders standard pin/roller/wall support symbols, and overlays the optimal topology with the boundary conditions.
+3. **Built an Engineering-Grade Visualization & Structural Analysis Suite:**
+   - `visualize_data.py` & `visualize_evolution.py`: Reconstructs discrete load application points, draws unclipped engineering load vectors, and renders standard pin/roller/wall support symbols.
+   - `structural_mechanics.py`, `buckling_optimizer.py`, `stress_buckling_analyzer.py`, `compare_buckling_optimization.py`: Full 2D plane stress recovery, Von Mises yield verification, geometric stiffness $\mathbf{K}_G$, and active buckling-aware optimization.
 
-4. **Engineered Multi-Core Parallel Generation for Windows:**
-   - Implemented a worker pool using Python's `multiprocessing` with global shared memory initialization, generating samples across all available CPU cores at high throughput.
+4. **Trained & Verified Phase 2 `TopoUNet` Deep Learning Pipeline:**
+   - Implemented `unet_model.py`, `losses.py`, `dataset.py`, `train_unet.py`, `predict_unet.py`, `visualize_unet.py`, `interactive_demo.py`, and `demo_server.py`.
 
 5. **Deep Codebase Cleanup & Streamlining:**
-   - Purged all prototype scripts, temporary test scripts, old test data files, image dumps, and bytecode caches, leaving a clean 2-module production core (`dataset_generator.py` and `visualize_data.py`).
+   - Purged all one-off scripts, temporary test datasets, cached `.npz` files, generated sample images, and bytecode caches.
 
 ---
 
@@ -115,65 +135,45 @@ where:
 - $\hat{\mathbf{y}} \in [0, 1]^{60 \times 120}$ is the predicted optimal material density field.
 - $f_\theta$ is a deep Convolutional Neural Network (U-Net) trained on thousands of verified SIMP solutions.
 
-Once trained, the U-Net replaces the 100-step iterative FEM loop with a **single forward pass taking $< 10$ milliseconds** on modern GPU/CPU hardware.
+Once trained, the U-Net replaces the 100-step iterative FEM loop with a **single forward pass taking $< 15$ milliseconds** on modern GPU/CPU hardware.
 
 ---
 
 ## 3. Codebase Architecture & Structure
 
-```
-topo_opto/
-│
-├── .gitignore               # Standard gitignore (caches, checkpoints, datasets)
-├── dataset_generator.py     # Production SIMP dataset generation engine with multiprocessing
-├── visualize_data.py        # Professional 3-panel engineering visualizer for any .npz dataset
-├── handover.md              # Project handover report and technical reference (this file)
-└── topo_opti_project.pdf    # Original project requirements specification
-```
-
 ### Module Responsibilities:
 
-1. **`dataset_generator.py` (Core Engine):**
-   - `get_stiffness_matrix(Emax, nu)`: Computes the 2D $Q_4$ element stiffness matrix $\mathbf{K}_E \in \mathbb{R}^{8 \times 8}$.
-   - `precompute_mesh_and_filter(nelx, nely, rmin)`: Vectorizes element DOF matrices (`edofMat`, `iK`, `jK`) and builds the sparse linear sensitivity filter matrix $\mathbf{H} \in \mathbb{R}^{N_e \times N_e}$.
-   - `solve_simp(...)`: Runs the 80-iteration SIMP solver with vectorized compliance calculations, mesh-independency filtering, and bisection OC updating.
-   - `sample_problem(...)`: Samples boundary conditions (discrete pins/rollers with Poisson distribution and 100× boundary bias) and point loads, validates kinematic stability, runs SIMP, and packs the 5-channel tensor.
-   - `main()`: Multiprocessing manager distributing sample generation across all available CPU cores.
+1. **Data Generation & SIMP Core (`dataset_generator.py`, `visualize_data.py`, `visualize_evolution.py`):**
+   - `dataset_generator.py`: Vectorized $Q_4$ SIMP FEA solver, precomputed sensitivity filter $\mathbf{H}$, Sosnovik Poisson discrete support/load sampler, and multi-core dataset generator.
+   - `visualize_data.py`: 3-panel engineering visualizer for `.npz` datasets (creates `images/` on-demand).
+   - `visualize_evolution.py`: Tracks and visualizes SIMP optimization progression across iterations.
 
-2. **`visualize_data.py` (Visualization Engine):**
-   - `extract_discrete_loads(ch_fx, ch_fy)`: Clusters element load arrays to reconstruct discrete application nodes and force vectors.
-   - `draw_domain_and_bcs(ax, ch_bc)`: Renders domain borders and engineering support symbols (pins, rollers, clamped walls).
-   - `draw_loads(ax, loads)`: Draws unclipped load arrows with magnitude $|F|$ and angle $\theta$ callout boxes.
-   - `visualize_dataset(...)`: Produces high-resolution 3-panel figures for dataset samples. Automatically creates `images/` directory when run.
+2. **Phase 2 Deep Learning U-Net (`unet_model.py`, `losses.py`, `dataset.py`, `train_unet.py`, `predict_unet.py`, `visualize_unet.py`, `interactive_demo.py`, `demo_server.py`):**
+   - `unet_model.py`: 4-level encoder-decoder `TopoUNet` with automatic reflection padding $(60, 120) \to (64, 128)$ and cropping.
+   - `losses.py`: `TopoCompositeLoss` combining BCE, Soft Dice, Volume Fraction MSE, and scheduled Binarization penalty.
+   - `dataset.py`: `TopoDataset` with physics-consistent horizontal/vertical reflections ($F_x \to -F_x$, $F_y \to -F_y$).
+   - `train_unet.py` & `predict_unet.py`: End-to-end training and evaluation pipelines.
+   - `visualize_unet.py`: 5-mode diagnostic suite (`comparison`, `sweep_vf`, `sweep_threshold`, `stress`, `batch`).
+   - `interactive_demo.py` & `demo_server.py`: CLI and zero-dependency browser web application for real-time topology prediction.
+
+3. **Structural Mechanics & Active Buckling (`structural_mechanics.py`, `buckling_optimizer.py`, `stress_buckling_analyzer.py`, `compare_buckling_optimization.py`):**
+   - `structural_mechanics.py`: $Q_4$ plane stress recovery, Von Mises stress, geometric stiffness matrix $\mathbf{K}_G$, and shift-invert eigenvalue buckling solver.
+   - `buckling_optimizer.py`: Hybrid compliance + modal strain energy buckling-aware SIMP optimizer.
+   - `stress_buckling_analyzer.py` & `compare_buckling_optimization.py`: Engineering health certificates and head-to-head compliance vs. buckling comparisons.
 
 ---
 
 ## 4. Codebase Audit & Cleanup Log (What was removed and why)
 
-All redundant, prototype, test, and transient artifact files were purged to maintain a zero-clutter workspace:
+All redundant, prototype, one-off, and transient artifact files were purged to maintain a clean workspace:
 
-### 4.1 Purged Items & Rationale
 | Item Removed | Type | Rationale |
 | :--- | :--- | :--- |
-| **`images/`** | Directory | All previous test plots and diagrams were cleared so that fresh visualizations can be generated directly from new dataset runs. |
-| **`test_simp.py`** | Script | Standalone debug script used to test the early $Q_4$ DOF fix. Fully superseded by `dataset_generator.py`. |
-| **`top88.py`** | Script | Pure DTU benchmark script used during initial mathematical validation against Andreassen (2011). No longer required once the solver in `dataset_generator.py` was verified. |
-| **`generate_paper_visualization.py`** | Script | One-off script used to recreate Sosnovik paper figures. |
-| **`test_sosnovik_generator.py`** | Script | Research prototype for Poisson boundary sampling. Fully integrated into `dataset_generator.py`. |
-| **`create_sampling_comparison.py`** | Script | One-off plot script for the bulky vs. precise comparison graphic. |
-| **`create_literature_pipeline_figure.py`** | Script | One-off infographic generator. |
-| **`test_dataset.npz`** | Data | Small 4-sample test dataset archive. |
-| **`topo_dataset.npz`** | Data | Incomplete single-sample test file. |
-| **`__pycache__/`** | Cache | Python compiled `.pyc` bytecode directories. |
-
-### 4.2 Retained Core Files
-| File Retained | Role | Why It is Essential |
-| :--- | :--- | :--- |
-| **`dataset_generator.py`** | **Core Pipeline** | High-throughput parallel SIMP dataset generator producing `(N, 5, 60, 120)` inputs $\to$ `(N, 60, 120)` density targets. |
-| **`visualize_data.py`** | **Visualizer** | Renders 3-panel engineering graphics with support symbols and load vectors. |
-| **`handover.md`** | **Documentation** | Definitive technical specification and handover report. |
-| **`topo_opti_project.pdf`** | **Specification** | User's original course requirements document. |
-| **`.gitignore`** | **Configuration** | Prevents cache files, checkpoints, and data archives from polluting version control. |
+| **`images/`** | Directory | All generated sample plots, comparisons, and GIFs were cleared for a clean slate moving into the next phase. |
+| **`generate_*.py`, `simulate_*.py`, `train_and_evaluate_pipeline.py`** | Scripts | One-off figure generators and polling wrappers removed; all core functionality resides in the modular scripts. |
+| **`topo_dataset.npz`, `results_50iter_sample_000.npz`** | Temp Data | Temporary small/cached `.npz` archives removed; production `topo_dataset_1000.npz` retained. |
+| **`checkpoints/latest_unet.pth`, `training_curves.png`, `training_history.json`** | Temp Logs | Redundant checkpoint and training log artifacts removed; production `checkpoints/best_unet.pth` retained. |
+| **`__pycache__/`** | Cache | Python compiled `.pyc` bytecode directories cleared. |
 
 ---
 
