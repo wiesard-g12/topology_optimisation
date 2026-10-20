@@ -83,6 +83,10 @@ class PhysicsFeatureStem(nn.Module):
         super().__init__()
         self.filter_s9 = SeparableGaussianFilter2D(sigma=9.0)
         self.filter_s21 = SeparableGaussianFilter2D(sigma=21.0)
+        self._cached_grid = None
+        self._cached_shape = None
+        self._cached_device = None
+        self._cached_dtype = None
 
     def forward(self, x):
         # Auto-upgrade 5-channel input to 6-channel
@@ -107,14 +111,21 @@ class PhysicsFeatureStem(nn.Module):
         phi_fx_s9 = self.filter_s9(fx)
         phi_fy_s9 = self.filter_s9(fy)
 
-        # 3. Normalized spatial coordinates in [-1, 1]
-        grid_y, grid_x = torch.meshgrid(
-            torch.linspace(-1.0, 1.0, h, device=x.device, dtype=x.dtype),
-            torch.linspace(-1.0, 1.0, w, device=x.device, dtype=x.dtype),
-            indexing='ij'
-        )
-        coord_x = grid_x.unsqueeze(0).unsqueeze(0).expand(b, 1, h, w)
-        coord_y = grid_y.unsqueeze(0).unsqueeze(0).expand(b, 1, h, w)
+        # 3. Normalized spatial coordinates in [-1, 1] (cached for zero-overhead forward passes)
+        if (self._cached_grid is None or self._cached_shape != (h, w) or
+                self._cached_device != x.device or self._cached_dtype != x.dtype):
+            grid_y, grid_x = torch.meshgrid(
+                torch.linspace(-1.0, 1.0, h, device=x.device, dtype=x.dtype),
+                torch.linspace(-1.0, 1.0, w, device=x.device, dtype=x.dtype),
+                indexing='ij'
+            )
+            self._cached_grid = (grid_x.unsqueeze(0).unsqueeze(0), grid_y.unsqueeze(0).unsqueeze(0))
+            self._cached_shape = (h, w)
+            self._cached_device = x.device
+            self._cached_dtype = x.dtype
+
+        coord_x = self._cached_grid[0].expand(b, 1, h, w)
+        coord_y = self._cached_grid[1].expand(b, 1, h, w)
 
         # Concatenate 12 dense channels
         dense_physics = torch.cat([

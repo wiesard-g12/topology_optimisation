@@ -32,7 +32,7 @@ from visualize_data import extract_discrete_loads, draw_loads, draw_domain_and_b
 
 
 def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_density,
-                                 latency_ms, output_path):
+                                 latency_ms, output_path, threshold=0.35):
     """
     Renders a publication-ready 5-panel comparison figure.
     Supports both 6-channel and legacy 5-channel tensors.
@@ -58,7 +58,7 @@ def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_
     gt_vf = float(np.mean(target_density))
 
     # Calculate metrics
-    bin_pred = (pred_density >= 0.5).astype(float)
+    bin_pred = (pred_density >= threshold).astype(float)
     bin_gt = (target_density >= 0.5).astype(float)
 
     intersection = np.sum(bin_pred * bin_gt)
@@ -109,7 +109,7 @@ def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_
     im3 = ax3.imshow(1.0 - bin_pred, cmap='gray', vmin=0, vmax=1,
                      extent=[0, nelx, nely, 0], interpolation='nearest')
     bin_vf = float(np.mean(bin_pred))
-    ax3.set_title(rf"4. Binarized Topology ($\hat{{y}} \geq 0.5$)" + "\n" + f"Dice = {dice:.3f} | $V_f = {bin_vf:.3f}$",
+    ax3.set_title(rf"4. Binarized Topology ($\hat{{y}} \geq {threshold:.2f}$)" + "\n" + f"Dice = {dice:.3f} | $V_f = {bin_vf:.3f}$",
                   fontsize=11, fontweight='bold', pad=8)
     ax3.set_xlim(-5, nelx + 5)
     ax3.set_ylim(nely + 5, -5)
@@ -143,7 +143,7 @@ def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_
 
 
 def benchmark_and_evaluate(checkpoint_path, dataset_path, output_dir="images",
-                           num_visualizations=5, device_str='auto'):
+                           num_visualizations=5, device_str='auto', threshold=0.35):
     if device_str == 'auto':
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
@@ -228,7 +228,7 @@ def benchmark_and_evaluate(checkpoint_path, dataset_path, output_dir="images",
             input_np = x.cpu().numpy()
 
             # Metrics
-            bin_pred = (pred_np >= 0.5).astype(float)
+            bin_pred = (pred_np >= threshold).astype(float)
             bin_gt = (target_np >= 0.5).astype(float)
             dice = (2.0 * np.sum(bin_pred * bin_gt) + 1e-6) / (np.sum(bin_pred) + np.sum(bin_gt) + 1e-6)
             mse = np.mean((pred_np - target_np) ** 2)
@@ -249,7 +249,8 @@ def benchmark_and_evaluate(checkpoint_path, dataset_path, output_dir="images",
                     target_density=target_np,
                     pred_density=pred_np,
                     latency_ms=lat,
-                    output_path=out_fig
+                    output_path=out_fig,
+                    threshold=threshold
                 )
                 print(f"  [Sample {i:03d}] Dice={dice:.3f} | MSE={mse:.5f} | Vf Err={vf_err:.4f} -> {out_fig}")
 
@@ -268,6 +269,7 @@ def main():
     parser.add_argument("--dataset", type=str, default="topo_dataset_1000.npz", help="Dataset path")
     parser.add_argument("--output_dir", type=str, default="images", help="Output directory for prediction figures")
     parser.add_argument("--num_viz", type=int, default=5, help="Number of samples to visualize")
+    parser.add_argument("--threshold", type=float, default=0.35, help="Binarization cutoff threshold")
     parser.add_argument("--device", type=str, default="auto", help="Device (cpu, cuda, auto)")
     args = parser.parse_args()
 
@@ -276,7 +278,8 @@ def main():
         dataset_path=args.dataset,
         output_dir=args.output_dir,
         num_visualizations=args.num_viz,
-        device_str=args.device
+        device_str=args.device,
+        threshold=args.threshold
     )
 
 

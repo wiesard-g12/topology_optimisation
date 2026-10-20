@@ -169,7 +169,7 @@ def build_benchmark_problem(case_name, volfrac=0.40, nelx=120, nely=60, load_ang
 
 def run_demo(case_name='cantilever', volfrac=0.40, sample_idx=None, dataset_path="topo_dataset_1000.npz",
              checkpoint_path="checkpoints/best_unet.pth", compare_simp=False, simp_iters=40,
-             output_path=None, threshold=0.5):
+             output_path=None, threshold=0.35):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 1. Load Model
@@ -340,7 +340,7 @@ def main():
     parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet.pth", help="Checkpoint path")
     parser.add_argument("--compare_simp", action="store_true", help="Run SIMP solver side-by-side for verification")
     parser.add_argument("--simp_iters", type=int, default=40, help="SIMP iterations if compare_simp is enabled")
-    parser.add_argument("--threshold", type=float, default=0.5, help="Binarization cutoff threshold")
+    parser.add_argument("--threshold", type=float, default=0.35, help="Binarization cutoff threshold")
     parser.add_argument("--output", type=str, default=None, help="Output plot path")
     args = parser.parse_args()
 

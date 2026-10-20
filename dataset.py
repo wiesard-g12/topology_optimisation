@@ -42,19 +42,21 @@ class TopoDataset(Dataset):
                 inputs[:, 2:5]
             ], axis=1)
 
-        self.inputs = inputs
-        self.targets = data['targets'].astype(np.float32)
-        if self.targets.ndim == 3:
-            self.targets = np.expand_dims(self.targets, axis=1)
+        self.inputs = torch.from_numpy(inputs).float().contiguous()
+        targets = data['targets'].astype(np.float32)
+        if targets.ndim == 3:
+            targets = np.expand_dims(targets, axis=1)
+        self.targets = torch.from_numpy(targets).float().contiguous()
 
         # Strain energy loading with graceful fallback
         if 'strain_energy' in data:
-            self.strain_energy = data['strain_energy'].astype(np.float32)
-            if self.strain_energy.ndim == 3:
-                self.strain_energy = np.expand_dims(self.strain_energy, axis=1)
+            strain_energy = data['strain_energy'].astype(np.float32)
+            if strain_energy.ndim == 3:
+                strain_energy = np.expand_dims(strain_energy, axis=1)
         else:
             # Fallback proxy: use targets as proxy so legacy .npz files continue to work
-            self.strain_energy = self.targets.copy()
+            strain_energy = targets.copy()
+        self.strain_energy = torch.from_numpy(strain_energy).float().contiguous()
 
         self.augment = augment
         self.return_strain_energy = return_strain_energy
@@ -64,38 +66,34 @@ class TopoDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        x = self.inputs[idx].copy()    # (6, 60, 120)
-        y = self.targets[idx].copy()   # (1, 60, 120)
-        se = self.strain_energy[idx].copy() # (1, 60, 120)
+        x = self.inputs[idx].clone()          # (6, 60, 120)
+        y = self.targets[idx].clone()         # (1, 60, 120)
+        se = self.strain_energy[idx].clone()  # (1, 60, 120)
 
         if self.augment:
-            # 1. Physics-consistent Horizontal Reflection (x -> -x, axis=2)
+            # 1. Physics-consistent Horizontal Reflection (x -> -x, dim=2)
             # Invert Fx vector component (Channel 3). bc_x and bc_y are {0, 1} constraint masks.
-            if np.random.rand() > 0.5:
-                x = np.flip(x, axis=2).copy()
+            if torch.rand(1).item() > 0.5:
+                x = torch.flip(x, dims=[2])
                 x[3] = -x[3] # Invert Fx
-                y = np.flip(y, axis=2).copy()
-                se = np.flip(se, axis=2).copy()
+                y = torch.flip(y, dims=[2])
+                se = torch.flip(se, dims=[2])
 
-            # 2. Physics-consistent Vertical Reflection (y -> -y, axis=1)
+            # 2. Physics-consistent Vertical Reflection (y -> -y, dim=1)
             # Invert Fy vector component (Channel 4).
-            if np.random.rand() > 0.5:
-                x = np.flip(x, axis=1).copy()
+            if torch.rand(1).item() > 0.5:
+                x = torch.flip(x, dims=[1])
                 x[4] = -x[4] # Invert Fy
-                y = np.flip(y, axis=1).copy()
-                se = np.flip(se, axis=1).copy()
-
-        x_tensor = torch.from_numpy(x)
-        y_tensor = torch.from_numpy(y)
-        se_tensor = torch.from_numpy(se)
+                y = torch.flip(y, dims=[1])
+                se = torch.flip(se, dims=[1])
 
         if self.return_strain_energy:
-            return x_tensor, y_tensor, se_tensor
-        return x_tensor, y_tensor
+            return x, y, se
+        return x, y
 
 
 def get_dataloaders(data_path, batch_size=16, val_split=0.15, augment=True,
-                    num_workers=0, seed=42, return_strain_energy=True):
+                    num_workers=0, pin_memory=False, seed=42, return_strain_energy=True):
     """
     Creates train and validation DataLoader instances with reproducible splitting.
     """
@@ -117,15 +115,20 @@ def get_dataloaders(data_path, batch_size=16, val_split=0.15, augment=True,
 
         train_loader = DataLoader(
             train_subset, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, drop_last=(len(train_subset) > batch_size)
+            num_workers=num_workers, pin_memory=pin_memory,
+            drop_last=(len(train_subset) > batch_size)
         )
         val_loader = DataLoader(
             val_subset, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers
+            num_workers=num_workers, pin_memory=pin_memory
         )
     else:
         train_data = TopoDataset(data_path, augment=augment, return_strain_energy=return_strain_energy)
-        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        train_loader = DataLoader(
+            train_data, batch_size=batch_size, shuffle=True,
+            num_workers=num_workers, pin_memory=pin_memory
+        )
         val_loader = None
 
     return train_loader, val_loader
+

@@ -58,7 +58,7 @@ def compute_metrics(preds, targets):
     return {'mse': mse, 'mae': mae, 'acc': acc, 'dice': dice}
 
 
-def train_one_epoch(model, loader, criterion, optimizer, device, epoch):
+def train_one_epoch(model, loader, criterion, optimizer, scaler, device, epoch, use_amp=True):
     model.train()
     running_loss = 0.0
     running_bce = 0.0
@@ -71,28 +71,36 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch):
     for batch_idx, batch in enumerate(loader):
         if len(batch) == 3:
             inputs, targets, se = batch
-            se = se.to(device)
+            se = se.to(device, non_blocking=True)
         else:
             inputs, targets = batch
             se = None
 
-        inputs = inputs.to(device)
-        targets = targets.to(device)
+        inputs = inputs.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
 
-        optimizer.zero_grad()
-        preds = model(inputs)
+        optimizer.zero_grad(set_to_none=True)
+
+        with torch.amp.autocast(device_type=device.type, enabled=use_amp):
+            preds = model(inputs)
 
         loss, loss_dict = criterion(
-            preds, targets, inputs,
+            preds.float(), targets.float(), inputs.float(),
             epoch=epoch,
-            strain_energy=se,
-            raw_probs=model.last_raw_probs
+            strain_energy=se.float() if se is not None else None,
+            raw_probs=model.last_raw_probs.float() if model.last_raw_probs is not None else None
         )
-        loss.backward()
 
-        # Gradient clipping for numerical stability
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-        optimizer.step()
+        if scaler is not None and use_amp:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            optimizer.step()
 
         running_loss += loss.item()
         running_bce += loss_dict.get('bce', 0.0)
@@ -114,7 +122,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch):
     }
 
 
-def evaluate(model, loader, criterion, device, epoch):
+def evaluate(model, loader, criterion, device, epoch, use_amp=True):
     model.eval()
     running_loss = 0.0
     running_bce = 0.0
@@ -127,24 +135,26 @@ def evaluate(model, loader, criterion, device, epoch):
     all_preds = []
     all_targets = []
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch in loader:
             if len(batch) == 3:
                 inputs, targets, se = batch
-                se = se.to(device)
+                se = se.to(device, non_blocking=True)
             else:
                 inputs, targets = batch
                 se = None
 
-            inputs = inputs.to(device)
-            targets = targets.to(device)
+            inputs = inputs.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
 
-            preds = model(inputs)
+            with torch.amp.autocast(device_type=device.type, enabled=use_amp):
+                preds = model(inputs)
+
             loss, loss_dict = criterion(
-                preds, targets, inputs,
+                preds.float(), targets.float(), inputs.float(),
                 epoch=epoch,
-                strain_energy=se,
-                raw_probs=model.last_raw_probs
+                strain_energy=se.float() if se is not None else None,
+                raw_probs=model.last_raw_probs.float() if model.last_raw_probs is not None else None
             )
 
             running_loss += loss.item()
@@ -222,8 +232,19 @@ def plot_training_curves(history, save_path):
 
 def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
-    if device.type == 'cpu':
-        num_threads = min(8, os.cpu_count() or 4)
+    use_amp = (device.type == 'cuda') and not args.no_amp
+
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        print(f"CUDA GPU Acceleration Enabled: {gpu_name} ({gpu_mem:.2f} GB VRAM, Ampere Tensor Cores)", flush=True)
+        print(f"AMP FP16 Mixed Precision: {'Enabled' if use_amp else 'Disabled'}", flush=True)
+        print(f"cuDNN Benchmark: Enabled | TF32: Enabled", flush=True)
+    else:
+        num_threads = min(12, os.cpu_count() or 4)
         torch.set_num_threads(num_threads)
         print(f"PyTorch CPU Multithreading enabled: {num_threads} worker threads.", flush=True)
 
@@ -244,18 +265,21 @@ def train(args):
 
     os.makedirs(args.save_dir, exist_ok=True)
 
-    # Load dataset
+    # Load dataset with pinned memory when using CUDA
+    pin_mem = (device.type == 'cuda')
     train_loader, val_loader = get_dataloaders(
         data_path=args.dataset,
         batch_size=args.batch_size,
         val_split=args.val_split,
         augment=not args.no_augment,
+        num_workers=args.num_workers,
+        pin_memory=pin_mem,
         return_strain_energy=True
     )
 
     n_train_samples = len(train_loader.dataset)
     n_val_samples = len(val_loader.dataset) if val_loader else 0
-    print(f"DataLoaders ready: {n_train_samples} training samples, {n_val_samples} validation samples.", flush=True)
+    print(f"DataLoaders ready: {n_train_samples} training samples, {n_val_samples} validation samples (pin_memory={pin_mem}).", flush=True)
 
     # Initialize PI-UNet model
     model = TopoUNet(in_channels=6, out_channels=1, base_filters=args.base_filters)
@@ -263,7 +287,7 @@ def train(args):
     total_p, train_p = count_parameters(model)
     print(f"PI-UNet Architecture Initialized: {train_p:,} trainable parameters.", flush=True)
 
-    # Loss & Optimizer
+    # Loss & Optimizer & Scaler
     criterion = TopoCompositeLoss(
         w_bce=args.w_bce,
         w_dice=args.w_dice,
@@ -272,8 +296,10 @@ def train(args):
         w_stiff=args.w_stiff,
         w_edge=args.w_edge
     )
+    criterion.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr * 0.01)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp) if device.type == 'cuda' else None
 
     best_val_loss = float('inf')
     history = []
@@ -283,15 +309,18 @@ def train(args):
     for epoch in range(1, args.epochs + 1):
         t_epoch_start = time.time()
 
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch)
+        train_loss = train_one_epoch(
+            model, train_loader, criterion, optimizer, scaler, device, epoch, use_amp=use_amp
+        )
 
         if val_loader is not None:
-            val_loss, val_metrics = evaluate(model, val_loader, criterion, device, epoch)
+            val_loss, val_metrics = evaluate(model, val_loader, criterion, device, epoch, use_amp=use_amp)
         else:
             val_loss, val_metrics = None, None
 
         scheduler.step()
         epoch_time = time.time() - t_epoch_start
+        throughput = n_train_samples / max(epoch_time, 1e-4)
 
         # Save metrics
         epoch_record = {
@@ -300,7 +329,8 @@ def train(args):
             'val_loss': val_loss,
             'val_metrics': val_metrics,
             'lr': scheduler.get_last_lr()[0],
-            'time_sec': epoch_time
+            'time_sec': epoch_time,
+            'samples_per_sec': throughput
         }
         history.append(epoch_record)
 
@@ -311,7 +341,7 @@ def train(args):
                        f"Dice={val_metrics['dice']:.4f} MSE={val_metrics['mse']:.4f}")
 
         print(f"Epoch [{epoch:02d}/{args.epochs:02d}] "
-              f"({epoch_time:.1f}s) | Train: total={train_loss['total']:.4f} "
+              f"({epoch_time:.1f}s | {throughput:.1f} smp/s) | Train: total={train_loss['total']:.4f} "
               f"BCE={train_loss['bce']:.4f} Stiff={train_loss['stiff']:.4f} "
               f"Edge={train_loss['edge']:.4f} Vf_MSE={train_loss['vf_mse']:.5f}{val_str}", flush=True)
 
@@ -332,8 +362,12 @@ def train(args):
         current_loss = val_loss['total'] if val_loss else train_loss['total']
         if current_loss < best_val_loss:
             best_val_loss = current_loss
-            best_path = os.path.join(args.save_dir, "best_unet.pth")
+            ckpt_name = args.checkpoint_name if hasattr(args, 'checkpoint_name') and args.checkpoint_name else "best_unet.pth"
+            best_path = os.path.join(args.save_dir, ckpt_name)
             torch.save(checkpoint, best_path)
+            # Also maintain canonical best_unet.pth
+            if ckpt_name != "best_unet.pth":
+                torch.save(checkpoint, os.path.join(args.save_dir, "best_unet.pth"))
 
     total_time = time.time() - t_start
     print("=" * 70)
@@ -355,7 +389,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train TopoUNet / PI-UNet for Real-Time Topology Optimization")
     parser.add_argument("--dataset", type=str, default="topo_dataset_1000.npz", help="Path to .npz dataset")
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=16, help="Mini-batch size")
+    parser.add_argument("--batch_size", type=int, default=32, help="Mini-batch size (default 32 for optimal GPU utilization)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--val_split", type=float, default=0.15, help="Validation set split fraction")
     parser.add_argument("--base_filters", type=int, default=64, help="Base filter width for U-Net")
@@ -367,8 +401,11 @@ def main():
     parser.add_argument("--w_edge", type=float, default=0.2, help="Weight for Sobel edge loss")
     parser.add_argument("--fea_finetune_epochs", type=int, default=0, help="Epochs for FEA self-adjoint fine-tuning")
     parser.add_argument("--no_augment", action="store_true", help="Disable physics augmentations")
+    parser.add_argument("--no_amp", action="store_true", help="Disable AMP FP16 mixed precision on CUDA")
+    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader worker processes (default 0 for in-memory fast indexing)")
     parser.add_argument("--cpu", action="store_true", help="Force CPU training")
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
+    parser.add_argument("--checkpoint_name", type=str, default="best_unet_3000.pth", help="File name for best model checkpoint")
 
     args = parser.parse_args()
     train(args)

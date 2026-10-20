@@ -121,7 +121,7 @@ def compute_or_get_simp(preset, volfrac, custom_idx=None):
     return None, 0.0, False
 
 
-def generate_plot_base64(input_tensor, pred_density, threshold=0.5, simp_density=None, 
+def generate_plot_base64(input_tensor, pred_density, threshold=0.35, simp_density=None, 
                          latency_ms=0.0, simp_time_ms=0.0):
     nelx = input_tensor.shape[2]
     nely = input_tensor.shape[1]
@@ -293,9 +293,9 @@ HTML_PAGE = """<!DOCTYPE html>
         <div>
           <div class="flex justify-between text-xs font-medium text-slate-300 mb-1">
             <span>Binarization Cutoff Threshold</span>
-            <span id="threshDisplay" class="font-mono text-purple-400 font-semibold">0.50</span>
+            <span id="threshDisplay" class="font-mono text-purple-400 font-semibold">0.35</span>
           </div>
-          <input id="threshSlider" type="range" min="0.10" max="0.90" step="0.05" value="0.50"
+          <input id="threshSlider" type="range" min="0.10" max="0.90" step="0.05" value="0.35"
                  class="w-full accent-purple-500 bg-slate-800 rounded-lg h-2 cursor-pointer">
         </div>
 
@@ -502,7 +502,7 @@ class TopoDemoHandler(http.server.BaseHTTPRequestHandler):
 
             preset = req.get('preset', 'cantilever')
             volfrac = float(req.get('volfrac', 0.40))
-            threshold = float(req.get('threshold', 0.50))
+            threshold = float(req.get('threshold', 0.35))
             compare_simp = bool(req.get('compare_simp', True))
             custom_idx = req.get('custom_idx', None)
 

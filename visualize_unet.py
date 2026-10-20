@@ -77,7 +77,7 @@ def get_sample_data(sample_idx=None, case_name='cantilever', volfrac=0.40, datas
 # MODE 1: 6-PANEL ENGINEERING COMPARISON
 # =========================================================================
 def visualize_comparison(input_tensor, simp_density, title, target_vf, model, device,
-                         threshold=0.5, output_path="images/unet_viz_comparison.png"):
+                         threshold=0.35, output_path="images/unet_viz_comparison.png"):
     nelx = input_tensor.shape[2]
     nely = input_tensor.shape[1]
 
@@ -243,7 +243,7 @@ def visualize_vf_sweep(case_name='cantilever', vfs=(0.25, 0.35, 0.45, 0.55),
         lat = (time.perf_counter() - t0) * 1000.0
 
         pvf = float(np.mean(pred))
-        bvf = float(np.mean(pred >= 0.5))
+        bvf = float(np.mean(pred >= 0.35))
         pred_vfs.append(pvf)
         latencies.append(lat)
 
@@ -281,10 +281,10 @@ def visualize_vf_sweep(case_name='cantilever', vfs=(0.25, 0.35, 0.45, 0.55),
 
         # Panel 3: Binarized Truss
         ax2 = axes[idx, 2]
-        bin_img = (pred >= 0.5).astype(float)
+        bin_img = (pred >= 0.35).astype(float)
         ax2.imshow(1.0 - bin_img, cmap='gray', vmin=0, vmax=1,
                    extent=[0, nelx, nely, 0], interpolation='nearest')
-        ax2.set_title(rf"Binarized Truss ($\hat{{y}} \geq 0.5$)" + "\n" +
+        ax2.set_title(rf"Binarized Truss ($\hat{{y}} \geq 0.35$)" + "\n" +
                       f"Truss $V_f = {bvf:.3f}$",
                       fontsize=10, fontweight='bold')
         ax2.set_xlim(-5, nelx + 5)
@@ -415,7 +415,7 @@ def visualize_stress_recovery(sample_idx=1, material='steel', force_mag=1500.0,
     with torch.no_grad():
         pred_tensor = model(tensor_x)
     pred_density = pred_tensor.squeeze().cpu().numpy()
-    bin_pred = (pred_density >= 0.5).astype(float)
+    bin_pred = (pred_density >= 0.35).astype(float)
 
     # Reconstruct load candidates and fixtures from input channels
     edofMat, iK, jK, H, Hs = precompute_mesh_and_filter(nelx, nely, 1.5)
@@ -592,7 +592,7 @@ def visualize_batch_scorecard(dataset_path="topo_dataset_1000.npz", num_samples=
         pred = pt.squeeze().cpu().numpy()
         lat = (time.perf_counter() - t0) * 1000.0
 
-        bin_p = (pred >= 0.5).astype(float)
+        bin_p = (pred >= 0.35).astype(float)
         bin_t = (tgt >= 0.5).astype(float)
 
         inter = np.sum(bin_p * bin_t)
@@ -678,7 +678,7 @@ def main():
     parser.add_argument("--case", type=str, default="cantilever", choices=["cantilever", "mbb", "bridge", "crane"])
     parser.add_argument("--sample_idx", type=int, default=None, help="Dataset sample index")
     parser.add_argument("--volfrac", type=float, default=0.40, help="Target volume fraction")
-    parser.add_argument("--threshold", type=float, default=0.50, help="Binarization cutoff threshold")
+    parser.add_argument("--threshold", type=float, default=0.35, help="Binarization cutoff threshold")
     parser.add_argument("--material", type=str, default="steel", help="Material preset for stress mode")
     parser.add_argument("--force", type=float, default=1500.0, help="Force magnitude (N) for stress mode")
     parser.add_argument("--dataset", type=str, default="topo_dataset_1000.npz", help="Dataset path")

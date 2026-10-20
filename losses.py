@@ -145,10 +145,13 @@ class TopoCompositeLoss(nn.Module):
         pred_pad = F.pad(pred, (1, 1, 1, 1), mode='replicate')
         target_pad = F.pad(target, (1, 1, 1, 1), mode='replicate')
 
-        grad_pred_x = F.conv2d(pred_pad, self.sobel_x)
-        grad_pred_y = F.conv2d(pred_pad, self.sobel_y)
-        grad_target_x = F.conv2d(target_pad, self.sobel_x)
-        grad_target_y = F.conv2d(target_pad, self.sobel_y)
+        sx = self.sobel_x.to(device=pred.device, dtype=pred.dtype)
+        sy = self.sobel_y.to(device=pred.device, dtype=pred.dtype)
+
+        grad_pred_x = F.conv2d(pred_pad, sx)
+        grad_pred_y = F.conv2d(pred_pad, sy)
+        grad_target_x = F.conv2d(target_pad, sx)
+        grad_target_y = F.conv2d(target_pad, sy)
 
         loss_edge = F.l1_loss(grad_pred_x, grad_target_x) + F.l1_loss(grad_pred_y, grad_target_y)
 

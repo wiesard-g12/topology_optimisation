@@ -660,7 +660,7 @@ def generate_dataset(num_samples=2000, output_path="topo_dataset.npz", num_cores
     Supports both without-buckling and with-buckling modes.
     """
     if num_cores is None:
-        num_cores = max(1, mp.cpu_count() - 1)
+        num_cores = max(1, mp.cpu_count())
         
     all_inputs = []
     all_targets = []
@@ -682,6 +682,8 @@ def generate_dataset(num_samples=2000, output_path="topo_dataset.npz", num_cores
             print(f"Loaded {len(all_inputs)} existing samples from {output_path}. Resuming at seed {current_seed}...", flush=True)
         except Exception as e:
             print(f"Warning: Could not read existing dataset for append: {e}", flush=True)
+
+    initial_count = len(all_inputs)
 
     mode_label = f"With Buckling (w={buckle_weight:.2f}, start={buckle_start_iter})" if use_buckling else "Without Buckling (Pure Compliance)"
     print(f"============================================================", flush=True)
@@ -733,24 +735,40 @@ def generate_dataset(num_samples=2000, output_path="topo_dataset.npz", num_cores
                     if len(all_inputs) >= num_samples:
                         break
                         
-            # Auto-save after each batch to prevent data loss
-            inputs_arr = np.stack(all_inputs, axis=0).astype(np.float32)
-            targets_arr = np.stack(all_targets, axis=0).astype(np.float32)
-            se_arr = np.stack(all_se, axis=0).astype(np.float32)
-            comp_arr = np.array(all_comp, dtype=np.float32)
-            np.savez_compressed(
-                output_path,
-                inputs=inputs_arr,
-                targets=targets_arr,
-                strain_energy=se_arr,
-                compliance=comp_arr
-            )
+            # Save checkpoint after every batch to prevent data loss without zip overhead
+            if new_added > 0:
+                inputs_arr = np.stack(all_inputs, axis=0).astype(np.float32)
+                targets_arr = np.stack(all_targets, axis=0).astype(np.float32)
+                se_arr = np.stack(all_se, axis=0).astype(np.float32)
+                comp_arr = np.array(all_comp, dtype=np.float32)
+                np.savez(
+                    output_path,
+                    inputs=inputs_arr,
+                    targets=targets_arr,
+                    strain_energy=se_arr,
+                    compliance=comp_arr
+                )
             
             elapsed = time.time() - t_start
-            rate = len(all_inputs) / elapsed if elapsed > 0 else 0
+            new_generated = len(all_inputs) - initial_count
+            rate = new_generated / elapsed if elapsed > 0 else 0
             remaining = (num_samples - len(all_inputs)) / rate if rate > 0 else 0
             print(f"Progress: {len(all_inputs)}/{num_samples} samples saved "
                   f"({rate:.2f} samples/s, ETA: {remaining/60:.1f} min)", flush=True)
+
+    # Save final compressed file
+    print("Compressing and saving final dataset to disk...", flush=True)
+    inputs_arr = np.stack(all_inputs, axis=0).astype(np.float32)
+    targets_arr = np.stack(all_targets, axis=0).astype(np.float32)
+    se_arr = np.stack(all_se, axis=0).astype(np.float32)
+    comp_arr = np.array(all_comp, dtype=np.float32)
+    np.savez_compressed(
+        output_path,
+        inputs=inputs_arr,
+        targets=targets_arr,
+        strain_energy=se_arr,
+        compliance=comp_arr
+    )
                   
     total_time = time.time() - t_start
     print(f"Dataset successfully created in {total_time:.2f}s ({total_time/60:.2f} min).", flush=True)
