@@ -436,9 +436,14 @@ HTML_PAGE = """<!DOCTYPE html>
         img.classList.remove('opacity-30');
         spinner.classList.add('hidden');
 
+        const targetVf = (data.target_vf !== undefined) ? data.target_vf : payload.volfrac;
+        if (currentPreset.startsWith('sample_') || customIdx !== null) {
+          vfSlider.value = targetVf.toFixed(2);
+          vfDisplay.innerText = targetVf.toFixed(2);
+        }
         document.getElementById('metricLatency').innerText = data.latency_ms.toFixed(1) + ' ms';
         document.getElementById('metricPredVf').innerText = data.predicted_vf.toFixed(3);
-        document.getElementById('metricVfErr').innerText = Math.abs(data.predicted_vf - payload.volfrac).toFixed(4);
+        document.getElementById('metricVfErr').innerText = Math.abs(data.predicted_vf - targetVf).toFixed(4);
 
         if (data.dice_score !== null && data.dice_score !== undefined) {
           const diceVal = data.dice_score.toFixed(3);
@@ -547,6 +552,7 @@ class TopoDemoHandler(http.server.BaseHTTPRequestHandler):
 
             resp = {
                 'latency_ms': latency_ms,
+                'target_vf': float(volfrac),
                 'predicted_vf': float(np.mean(pred_density)),
                 'dice_score': dice,
                 'simp_time_ms': simp_time_ms,
@@ -587,8 +593,8 @@ def start_server(port=5000, checkpoint="checkpoints/best_unet.pth", dataset=None
 def main():
     parser = argparse.ArgumentParser(description="Run TopoUNet Web Demo")
     parser.add_argument("--port", type=int, default=5000, help="Server port (default: 5000)")
-    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet.pth", help="Model checkpoint path")
-    parser.add_argument("--dataset", type=str, default="topo_dataset_1000.npz", help="Dataset path")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet_rl.pth", help="Model checkpoint path")
+    parser.add_argument("--dataset", type=str, default="topo_dataset_3000.npz", help="Dataset path")
     args = parser.parse_args()
     start_server(port=args.port, checkpoint=args.checkpoint, dataset=args.dataset)
 

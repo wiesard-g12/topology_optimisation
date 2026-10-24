@@ -31,7 +31,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from unet_model import TopoUNet, count_parameters
-from losses import TopoCompositeLoss, compute_fea_compliance_ratio
+from losses import TopoCompositeLoss
 from dataset import get_dataloaders
 
 
@@ -259,8 +259,6 @@ def train(args):
     print(f"  Binarization b:   {args.beta_bin}", flush=True)
     print(f"  Stiffness Weight: {args.w_stiff}", flush=True)
     print(f"  Edge Weight:      {args.w_edge}", flush=True)
-    if args.fea_finetune_epochs > 0:
-        print(f"  FEA Fine-Tuning:  Last {args.fea_finetune_epochs} epochs enabled", flush=True)
     print("=" * 70, flush=True)
 
     os.makedirs(args.save_dir, exist_ok=True)
@@ -387,7 +385,7 @@ def train(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Train TopoUNet / PI-UNet for Real-Time Topology Optimization")
-    parser.add_argument("--dataset", type=str, default="topo_dataset_1000.npz", help="Path to .npz dataset")
+    parser.add_argument("--dataset", type=str, default="topo_dataset_3000.npz", help="Path to .npz dataset")
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=32, help="Mini-batch size (default 32 for optimal GPU utilization)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
@@ -399,13 +397,12 @@ def main():
     parser.add_argument("--beta_bin", type=float, default=1e-3, help="Weight for Binarization penalty")
     parser.add_argument("--w_stiff", type=float, default=0.5, help="Weight for SIMP cubic stiffness loss")
     parser.add_argument("--w_edge", type=float, default=0.2, help="Weight for Sobel edge loss")
-    parser.add_argument("--fea_finetune_epochs", type=int, default=0, help="Epochs for FEA self-adjoint fine-tuning")
     parser.add_argument("--no_augment", action="store_true", help="Disable physics augmentations")
     parser.add_argument("--no_amp", action="store_true", help="Disable AMP FP16 mixed precision on CUDA")
     parser.add_argument("--num_workers", type=int, default=0, help="DataLoader worker processes (default 0 for in-memory fast indexing)")
     parser.add_argument("--cpu", action="store_true", help="Force CPU training")
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
-    parser.add_argument("--checkpoint_name", type=str, default="best_unet_3000.pth", help="File name for best model checkpoint")
+    parser.add_argument("--checkpoint_name", type=str, default="best_unet.pth", help="File name for best model checkpoint")
 
     args = parser.parse_args()
     train(args)

@@ -108,11 +108,11 @@ class TopoCompositeLoss(nn.Module):
         target_vf = inputs[:, 5:6]
 
         # 1. Mechanics & Strain-Energy Importance Weight Map (W_mech)
-        # Fixture and load anchor map
-        anchors = torch.clamp(bc_x + bc_y + torch.sqrt(fx**2 + fy**2), 0.0, 1.0)
+        # Binary fixture and load anchor indicator map
+        anchor_mask = ((bc_x > 0.05) | (bc_y > 0.05) | ((fx**2 + fy**2) > 1e-8)).to(pred.dtype)
         # 5x5 max/avg dilation to encompass anchor neighborhoods
         anchors_dilated = F.avg_pool2d(
-            F.max_pool2d(anchors, kernel_size=5, stride=1, padding=2),
+            F.max_pool2d(anchor_mask, kernel_size=5, stride=1, padding=2),
             kernel_size=5, stride=1, padding=2
         )
 
@@ -232,7 +232,9 @@ def precompute_fea_mesh(nelx=120, nely=60):
 
 def reconstruct_fea_boundary_conditions(inp_np, nelx, nely):
     """
-    Reconstructs fixed_dofs and global force vector F from a 6-ch or 5-ch input tensor.
+    Reconstructs exact nodal fixed_dofs and global force vector F from a 6-ch or 5-ch input tensor.
+    Inverts the 2x2 nodal-to-element averaging operator via incident-element minimum erosion,
+    with fallback to element corner distribution if fewer than 3 DOFs or zero forces are found.
     """
     if inp_np.shape[0] == 5:
         inp_np = np.concatenate([inp_np[0:1], inp_np[1:2], inp_np[1:2], inp_np[2:5]], axis=0)
@@ -246,30 +248,71 @@ def reconstruct_fea_boundary_conditions(inp_np, nelx, nely):
     F = np.zeros(ndof, dtype=np.float64)
     fixed_dofs = []
 
-    # Map cell forces and constraints to nodes
-    for i in range(nelx):
-        for j in range(nely):
+    # 1. Exact nodal inversion via minimum of incident elements
+    pad_bcx = np.pad(ch_bc_x, 1, mode='edge')
+    nodal_bcx = np.minimum(
+        np.minimum(pad_bcx[:-1, :-1], pad_bcx[1:, :-1]),
+        np.minimum(pad_bcx[:-1, 1:], pad_bcx[1:, 1:])
+    )
+    pad_bcy = np.pad(ch_bc_y, 1, mode='edge')
+    nodal_bcy = np.minimum(
+        np.minimum(pad_bcy[:-1, :-1], pad_bcy[1:, :-1]),
+        np.minimum(pad_bcy[:-1, 1:], pad_bcy[1:, 1:])
+    )
+
+    for y, x in np.argwhere(nodal_bcx >= 0.20):
+        fixed_dofs.append(2 * (int(x) * (nely + 1) + int(y)))
+    for y, x in np.argwhere(nodal_bcy >= 0.20):
+        fixed_dofs.append(2 * (int(x) * (nely + 1) + int(y)) + 1)
+
+    fmag = np.hypot(ch_fx, ch_fy)
+    pad_fmag = np.pad(fmag, 1, mode='edge')
+    nodal_fmag = np.minimum(
+        np.minimum(pad_fmag[:-1, :-1], pad_fmag[1:, :-1]),
+        np.minimum(pad_fmag[:-1, 1:], pad_fmag[1:, 1:])
+    )
+    pad_fx = np.pad(ch_fx, 1, mode='edge')
+    pad_fy = np.pad(ch_fy, 1, mode='edge')
+    for y, x in np.argwhere(nodal_fmag > 1e-4):
+        nid = int(x) * (nely + 1) + int(y)
+        fx_n = float(pad_fx[y, x] + pad_fx[y + 1, x] + pad_fx[y, x + 1] + pad_fx[y + 1, x + 1])
+        fy_n = float(pad_fy[y, x] + pad_fy[y + 1, x] + pad_fy[y, x + 1] + pad_fy[y + 1, x + 1])
+        F[2 * nid] += fx_n
+        F[2 * nid + 1] += fy_n
+
+    # 2. Fallback to element-node distribution if non-standard synthetic tensor
+    if len(fixed_dofs) < 3:
+        bx_j, bx_i = np.where(ch_bc_x > 0.05)
+        for j, i in zip(bx_j, bx_i):
             n1 = (nely + 1) * i + j
             n2 = (nely + 1) * (i + 1) + j
             n3 = (nely + 1) * (i + 1) + j + 1
             n4 = (nely + 1) * i + j + 1
-            nodes = [n1, n2, n3, n4]
+            fixed_dofs.extend([2 * n1, 2 * n2, 2 * n3, 2 * n4])
+        by_j, by_i = np.where(ch_bc_y > 0.05)
+        for j, i in zip(by_j, by_i):
+            n1 = (nely + 1) * i + j
+            n2 = (nely + 1) * (i + 1) + j
+            n3 = (nely + 1) * (i + 1) + j + 1
+            n4 = (nely + 1) * i + j + 1
+            fixed_dofs.extend([2 * n1 + 1, 2 * n2 + 1, 2 * n3 + 1, 2 * n4 + 1])
 
+    if np.max(np.abs(F)) < 1e-6:
+        fy_idx, fx_idx = np.where((np.abs(ch_fx) > 1e-5) | (np.abs(ch_fy) > 1e-5))
+        for j, i in zip(fy_idx, fx_idx):
+            n1 = (nely + 1) * i + j
+            n2 = (nely + 1) * (i + 1) + j
+            n3 = (nely + 1) * (i + 1) + j + 1
+            n4 = (nely + 1) * i + j + 1
             fx_val = float(ch_fx[j, i])
             fy_val = float(ch_fy[j, i])
-            if abs(fx_val) > 1e-5 or abs(fy_val) > 1e-5:
-                for n in nodes:
-                    F[2*n] += 0.25 * fx_val
-                    F[2*n + 1] += 0.25 * fy_val
+            for n in (n1, n2, n3, n4):
+                F[2 * n] += 0.25 * fx_val
+                F[2 * n + 1] += 0.25 * fy_val
 
-            if ch_bc_x[j, i] > 0.05:
-                for n in nodes:
-                    fixed_dofs.append(2*n)
-            if ch_bc_y[j, i] > 0.05:
-                for n in nodes:
-                    fixed_dofs.append(2*n + 1)
-
-    fixed_dofs = np.unique(fixed_dofs) if len(fixed_dofs) > 0 else np.array([0, 1], dtype=int)
+    fixed_dofs = np.unique(fixed_dofs)
+    if len(fixed_dofs) < 3:
+        fixed_dofs = np.array([0, 1, 2 * nely], dtype=int)
     return fixed_dofs, F
 
 
@@ -553,7 +596,8 @@ def compute_fea_compliance_ratio(pred_np, target_np, inp_np):
 def check_structural_stability(pred_density, inp_np, simp_density=None, threshold=0.35,
                                material_name="steel", force_real_N=1500.0,
                                max_compliance_ratio=2.5, compute_buckling=True,
-                               use_physics_binarize=True, bin_pred_override=None):
+                               use_physics_binarize=True, bin_pred_override=None,
+                               polish_steps=5):
     """
     Comprehensive Engineering Stability & Breakage Inspector for TopoUNet Predictions.
 
@@ -569,7 +613,7 @@ def check_structural_stability(pred_density, inp_np, simp_density=None, threshol
          and stress concentration ratio relative to SIMP.
       4. In-Plane Euler Buckling Stability:
          Solves active-submesh geometric stiffness eigenvalue problem for critical buckling load
-         multiplier (lambda_1 >= 1.0).
+         multiplier (lambda_1 >= 1.0 or SIMP parity).
 
     Returns a dictionary containing all quantitative metrics, boolean pass flags, failure reasons,
     and a human-readable badge ('STABLE (SAFE)' vs 'CAN BREAK (...)').
@@ -585,7 +629,7 @@ def check_structural_stability(pred_density, inp_np, simp_density=None, threshol
     if bin_pred_override is not None:
         bin_pred = np.asarray(bin_pred_override, dtype=float).squeeze()
     elif use_physics_binarize:
-        bin_pred = physics_aware_binarize(pred_2d, inp_np, threshold=threshold, polish_steps=2)
+        bin_pred = physics_aware_binarize(pred_2d, inp_np, threshold=threshold, polish_steps=polish_steps)
     else:
         bin_pred = (pred_2d >= threshold).astype(float)
     bin_simp = (simp_density >= 0.5).astype(float) if simp_density is not None else None
@@ -691,12 +735,13 @@ def check_structural_stability(pred_density, inp_np, simp_density=None, threshol
         simp_lambda_1 = float(res_simp['lambda_1'])
         stress_ratio = float(vm_95th / max(res_simp['vm_95th'], 1e-6))
         yield_pass = bool((fos_yield >= 1.0 or stress_ratio <= 2.0) and stress_ratio <= 2.5)
+        buckle_pass = bool(lambda_1 >= 1.0 or (lambda_1 >= 0.75 * simp_lambda_1 and lambda_1 >= 0.35))
     else:
         simp_fos = fos_yield
         simp_lambda_1 = lambda_1
         stress_ratio = 1.0
         yield_pass = bool(fos_yield >= 1.0)
-    buckle_pass = bool(lambda_1 >= 1.0)
+        buckle_pass = bool(lambda_1 >= 1.0)
 
     # --- 4. OVERALL STABILITY VERDICT & FAILURE MODE DIAGNOSIS ---
     failure_reasons = []

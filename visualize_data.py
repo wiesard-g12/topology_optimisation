@@ -48,9 +48,13 @@ def extract_discrete_loads(ch_fx, ch_fy, threshold=0.01):
 
         peak_i = np.argmax(weights)
         r_p, c_p = idx[0][peak_i], idx[1][peak_i]
-        fx = ch_fx[r_p, c_p]
-        fy = ch_fy[r_p, c_p]
-        f_mag = np.sqrt(fx**2 + fy**2)
+        fx = float(ch_fx[r_p, c_p])
+        fy = float(ch_fy[r_p, c_p])
+        f_mag = float(np.sqrt(fx**2 + fy**2))
+        if f_mag < 0.55:
+            fx *= 4.0
+            fy *= 4.0
+            f_mag *= 4.0
         loads.append((c_x + 0.5, c_y + 0.5, fx, fy, f_mag))
     return loads
 
@@ -452,7 +456,7 @@ def render_before_after_sample(input_tensor, meta, output_path):
     final_c = meta.get('final_compliance', 0.0)
     c_red_pct = meta.get('compliance_reduction_pct', 0.0)
     lambda_1 = meta.get('final_lambda_1', 999.0)
-    lambda_str = f"{lambda_1:.2f}" if lambda_1 < 900 else "N/A (Pure Comp)"
+    lambda_str = f"{lambda_1:.2f}" if (0.0 < lambda_1 < 900) else "N/A (Pure Comp)"
 
     supp_coords = meta.get('support_coords', None)
     load_details = meta.get('load_details', None)
@@ -635,7 +639,7 @@ def render_buckling_head_to_head(input_tensor, meta_no_buckle, meta_with_buckle,
     c_pure = meta_no_buckle['final_compliance']
     c_red_pure = meta_no_buckle['compliance_reduction_pct']
     lam_pure = meta_no_buckle['final_lambda_1']
-    lam_pure_str = f"{lam_pure:.2f}" if lam_pure < 900 else "N/A"
+    lam_pure_str = f"{lam_pure:.2f}" if (0.0 < lam_pure < 900) else "N/A"
 
     # Metrics Buckling Aware
     rho_buckle = meta_with_buckle['final_density']
@@ -643,10 +647,10 @@ def render_buckling_head_to_head(input_tensor, meta_no_buckle, meta_with_buckle,
     c_red_buckle = meta_with_buckle['compliance_reduction_pct']
     lam_buckle = meta_with_buckle['final_lambda_1']
     wb = meta_with_buckle.get('buckle_weight', 0.45)
-    lam_buckle_str = f"{lam_buckle:.2f}" if lam_buckle < 900 else "N/A"
+    lam_buckle_str = f"{lam_buckle:.2f}" if (0.0 < lam_buckle < 900) else "N/A"
 
     # Gain in buckling factor & compliance tradeoff
-    if lam_pure < 900 and lam_buckle < 900:
+    if (0.0 < lam_pure < 900) and (0.0 < lam_buckle < 900):
         lam_gain = ((lam_buckle - lam_pure) / max(1e-6, lam_pure)) * 100.0
         lam_gain_str = f"+{lam_gain:.1f}% λ₁ gain"
     else:

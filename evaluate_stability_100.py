@@ -27,11 +27,14 @@ from unet_model import TopoUNet
 from losses import check_structural_stability, physics_aware_binarize
 
 
-def load_model(checkpoint_path="checkpoints/best_unet_3000.pth", device=None):
+def load_model(checkpoint_path="checkpoints/best_unet_rl.pth", device=None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if not os.path.exists(checkpoint_path):
-        checkpoint_path = "checkpoints/best_unet.pth"
+        for fallback in ("checkpoints/best_unet_rl.pth", "checkpoints/best_unet.pth"):
+            if os.path.exists(fallback):
+                checkpoint_path = fallback
+                break
     model = TopoUNet(in_channels=6, out_channels=1)
     ckpt = torch.load(checkpoint_path, map_location=device)
     state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
@@ -173,11 +176,16 @@ def plot_100_stability_report(records, summary, output_path="images/stability_10
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Structural Stability Accuracy on 100 Random Samples")
     parser.add_argument("--dataset", type=str, default="topo_dataset_3000.npz", help="Path to .npz dataset")
-    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet_3000.pth", help="Path to model checkpoint")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet_rl.pth", help="Path to model checkpoint")
     parser.add_argument("--num_samples", type=int, default=100, help="Number of random samples to evaluate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling")
     parser.add_argument("--threshold", type=float, default=0.35, help="Binarization cutoff threshold")
-    parser.add_argument("--val_only", action="store_true", default=True, help="Sample from held-out validation split")
+    parser.add_argument("--polish_steps", type=int, default=5, help="Number of OC physics polish steps (0 for none)")
+    parser.add_argument("--all_samples", action="store_true", help="Sample from full dataset instead of held-out validation split")
+    parser.add_argument("--split_mode", type=str, default="tail", choices=["tail", "random_split"],
+                        help="Validation pool selection: 'tail' (last 15%) or 'random_split' (torch random_split seed=42)")
+    parser.add_argument("--output_json", type=str, default=None, help="Output JSON report path")
+    parser.add_argument("--output_plot", type=str, default=None, help="Output plot PNG path")
     args = parser.parse_args()
 
     model, device, ckpt_used = load_model(args.checkpoint)
@@ -186,10 +194,22 @@ def main():
     targets_all = data['targets']
     total_n = len(inputs_all)
 
-    # Reproduce the exact validation split (last 15% of dataset or seeded split)
+    # Reproduce the validation split
     rng = np.random.default_rng(args.seed)
-    val_start = int(total_n * 0.85) if args.val_only and total_n >= 200 else 0
-    candidate_indices = np.arange(val_start, total_n)
+    if not args.all_samples and total_n >= 200:
+        if args.split_mode == "random_split":
+            from torch.utils.data import random_split
+            n_val = max(1, int(total_n * 0.15))
+            n_train = total_n - n_val
+            gen = torch.Generator().manual_seed(args.seed)
+            _, val_subset = random_split(range(total_n), [n_train, n_val], generator=gen)
+            candidate_indices = np.sort(np.array(val_subset.indices, dtype=int))
+        else:
+            val_start = int(total_n * 0.85)
+            candidate_indices = np.arange(val_start, total_n)
+    else:
+        candidate_indices = np.arange(total_n)
+
     if len(candidate_indices) < args.num_samples:
         candidate_indices = np.arange(total_n)
 
@@ -226,7 +246,7 @@ def main():
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
         pred = pred_tensor.squeeze().cpu().numpy()
-        bin_pred = physics_aware_binarize(pred, inp, threshold=args.threshold, polish_steps=2)
+        bin_pred = physics_aware_binarize(pred, inp, threshold=args.threshold, polish_steps=args.polish_steps)
         bin_simp = (simp >= 0.5).astype(float)
 
         inter = np.sum(bin_pred * bin_simp)
@@ -316,12 +336,14 @@ def main():
     print("=" * 80)
 
     os.makedirs("checkpoints", exist_ok=True)
-    json_path = "checkpoints/stability_100_report.json"
+    is_rl = "rl" in os.path.basename(ckpt_used).lower()
+    json_path = args.output_json or ("checkpoints/stability_100_rl_report.json" if is_rl else "checkpoints/stability_100_report.json")
     with open(json_path, "w") as f:
         json.dump({"summary": summary, "records": records}, f, indent=2)
     print(f"[Saved JSON Report] {json_path}")
 
-    plot_100_stability_report(records, summary, output_path="images/stability_100_random_report.png")
+    plot_path = args.output_plot or ("images/stability_100_rl_report.png" if is_rl else "images/stability_100_random_report.png")
+    plot_100_stability_report(records, summary, output_path=plot_path)
 
 
 if __name__ == "__main__":

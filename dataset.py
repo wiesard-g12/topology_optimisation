@@ -23,7 +23,21 @@ class TopoDataset(Dataset):
         augment (bool): Whether to apply physics-consistent spatial reflections
         return_strain_energy (bool): Whether to return strain energy tensor alongside inputs and targets
     """
-    def __init__(self, data_path, augment=False, return_strain_energy=True):
+    def __init__(self, data_path, augment=False, return_strain_energy=True, _shared_source=None):
+        if _shared_source is not None:
+            self.inputs = _shared_source.inputs
+            self.targets = _shared_source.targets
+            self.strain_energy = _shared_source.strain_energy
+            self.augment = augment
+            self.return_strain_energy = return_strain_energy
+            self.num_samples = len(self.inputs)
+            return
+
+        if not os.path.exists(data_path) and os.path.basename(data_path) == "topo_dataset_1000.npz":
+            alt_path = os.path.join(os.path.dirname(data_path), "topo_dataset_3000.npz")
+            if os.path.exists(alt_path):
+                data_path = alt_path
+
         if not os.path.exists(data_path):
             raise FileNotFoundError(f"Dataset file not found at: {data_path}")
 
@@ -96,9 +110,11 @@ def get_dataloaders(data_path, batch_size=16, val_split=0.15, augment=True,
                     num_workers=0, pin_memory=False, seed=42, return_strain_energy=True):
     """
     Creates train and validation DataLoader instances with reproducible splitting.
+    Shares underlying tensors in memory between train and val splits to avoid
+    loading the .npz archive multiple times.
     """
-    full_dataset = TopoDataset(data_path, augment=False, return_strain_energy=return_strain_energy)
-    n_total = len(full_dataset)
+    val_data = TopoDataset(data_path, augment=False, return_strain_energy=return_strain_energy)
+    n_total = len(val_data)
     n_val = max(1, int(n_total * val_split)) if n_total > 1 else 0
     n_train = n_total - n_val
 
@@ -106,9 +122,11 @@ def get_dataloaders(data_path, batch_size=16, val_split=0.15, augment=True,
         generator = torch.Generator().manual_seed(seed)
         train_indices, val_indices = random_split(range(n_total), [n_train, n_val], generator=generator)
 
-        # Separate datasets so data augmentation is only applied to training set
-        train_data = TopoDataset(data_path, augment=augment, return_strain_energy=return_strain_energy)
-        val_data = TopoDataset(data_path, augment=False, return_strain_energy=return_strain_energy)
+        # Share underlying tensors so data augmentation is only applied to training set without 3x RAM usage
+        train_data = TopoDataset(
+            data_path, augment=augment, return_strain_energy=return_strain_energy,
+            _shared_source=val_data
+        )
 
         train_subset = torch.utils.data.Subset(train_data, train_indices.indices)
         val_subset = torch.utils.data.Subset(val_data, val_indices.indices)
@@ -123,7 +141,10 @@ def get_dataloaders(data_path, batch_size=16, val_split=0.15, augment=True,
             num_workers=num_workers, pin_memory=pin_memory
         )
     else:
-        train_data = TopoDataset(data_path, augment=augment, return_strain_energy=return_strain_energy)
+        train_data = TopoDataset(
+            data_path, augment=augment, return_strain_energy=return_strain_energy,
+            _shared_source=val_data
+        )
         train_loader = DataLoader(
             train_data, batch_size=batch_size, shuffle=True,
             num_workers=num_workers, pin_memory=pin_memory

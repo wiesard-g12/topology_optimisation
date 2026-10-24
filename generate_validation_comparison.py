@@ -58,7 +58,7 @@ def evaluate_sample(sample_idx, dataset_path, model, device, threshold=0.35):
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
     pred_density = pred_tensor.squeeze().cpu().numpy()
-    bin_pred = physics_aware_binarize(pred_density, input_tensor, threshold=threshold, polish_steps=2)
+    bin_pred = physics_aware_binarize(pred_density, input_tensor, threshold=threshold, polish_steps=5)
     bin_simp = (simp_density >= 0.5).astype(float)
 
     # Metrics
@@ -75,7 +75,8 @@ def evaluate_sample(sample_idx, dataset_path, model, device, threshold=0.35):
         pred_density=pred_density,
         inp_np=input_tensor,
         simp_density=simp_density,
-        threshold=threshold
+        threshold=threshold,
+        bin_pred_override=bin_pred
     )
     fea_ratio = stability['fea_ratio']
     c_pred = stability['c_pred']
@@ -144,7 +145,7 @@ def plot_single_case(res, output_path):
     ax2 = fig.add_subplot(gs[0, 2])
     ax2.imshow(1.0 - pred_density, cmap='gray', vmin=0, vmax=1,
                extent=[0, nelx, nely, 0], interpolation='nearest')
-    ax2.set_title(f"3. TopoUNet Continuous Output ($\hat{{y}}$)\nLatency = {res['latency_ms']:.2f} ms | Pred $V_f = {res['pred_vf']:.3f}$",
+    ax2.set_title(rf"3. TopoUNet Continuous Output ($\hat{{y}}$)" + f"\nLatency = {res['latency_ms']:.2f} ms | Pred $V_f = {res['pred_vf']:.3f}$",
                   fontsize=11, fontweight='bold', pad=8)
     ax2.set_xlim(-5, nelx + 5)
     ax2.set_ylim(nely + 5, -5)
@@ -159,7 +160,7 @@ def plot_single_case(res, output_path):
     conn_str = "Connected" if stab['is_connected'] else "DISCONNECTED"
     ax3.set_title(
         rf"4. Binarized Truss ($\hat{{y}} \geq {res['threshold']:.2f}$) [{stab['short_badge']}]" + "\n" +
-        f"Dice={res['dice']:.3f} | Ratio={res['fea_ratio']:.2f}x | FoS={stab['fos_yield']:.2f} | $\lambda_1$={stab['lambda_1']:.1f}",
+        rf"Dice={res['dice']:.3f} | Ratio={res['fea_ratio']:.2f}x | FoS={stab['fos_yield']:.2f} | $\lambda_1$={stab['lambda_1']:.1f}",
         fontsize=10.5, fontweight='bold', color=stab['badge_color'], pad=8
     )
     ax3.text(
@@ -267,7 +268,7 @@ def plot_side_by_side_summary(res1, res2, output_path):
         # Col 2: TopoUNet Continuous
         ax2 = axes[row_idx, 2]
         ax2.imshow(1.0 - pred, cmap='gray', vmin=0, vmax=1, extent=[0, nelx, nely, 0])
-        ax2.set_title(f"TopoUNet Continuous ($\hat{{y}}$)\nLatency = {res['latency_ms']:.2f} ms",
+        ax2.set_title(rf"TopoUNet Continuous ($\hat{{y}}$)" + f"\nLatency = {res['latency_ms']:.2f} ms",
                       fontsize=11, fontweight='bold', pad=6)
         ax2.set_xlim(-5, nelx + 5)
         ax2.set_ylim(nely + 5, -5)
@@ -291,7 +292,7 @@ def plot_side_by_side_summary(res1, res2, output_path):
         # Col 4: Error Heatmap
         ax4 = axes[row_idx, 4]
         im4 = ax4.imshow(diff, cmap='inferno', vmin=0, vmax=1, extent=[0, nelx, nely, 0])
-        ax4.set_title(f"Absolute Error $|\hat{{y}} - y^*|$\nMSE = {res['mse']:.4f}",
+        ax4.set_title(rf"Absolute Error $|\hat{{y}} - y^*|$" + f"\nMSE = {res['mse']:.4f}",
                       fontsize=11, fontweight='bold', pad=6)
         ax4.set_xlim(-5, nelx + 5)
         ax4.set_ylim(nely + 5, -5)

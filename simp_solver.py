@@ -688,9 +688,6 @@ def solve_simp_unified(nelx, nely, volfrac, penal, fixeddofs, F,
                 # Buckling sensitivity: d_lambda / d_rho
                 d_lambda = penal * (xPhys**(penal - 1)) * me
 
-                # Smooth d_lambda with spatial filter H before normalizing to remove boundary spikes
-                d_lambda = np.asarray(H.dot(d_lambda)) / Hs
-
                 # Robust normalization using 98th percentile clamped to [0, 1.2]
                 p98_comp = float(np.percentile(-dc, 98))
                 p98_buckle = float(np.percentile(d_lambda, 98))
@@ -700,7 +697,7 @@ def solve_simp_unified(nelx, nely, volfrac, penal, fixeddofs, F,
 
                 # Smooth continuation ramp for buckling weight
                 ramp = min(1.0, (loop - buckle_start_iter + 1) / 10.0)
-                w_eff = min(buckle_weight, 0.25) * ramp
+                w_eff = float(buckle_weight) * ramp
 
                 blended_drive = (1.0 - w_eff) * norm_comp + w_eff * norm_buckle
                 dJ = -blended_drive
@@ -752,18 +749,15 @@ def solve_simp_unified(nelx, nely, volfrac, penal, fixeddofs, F,
     elapsed_time = time.time() - start_time
     final_density = xPhys.reshape((nely, nelx), order='F').astype(np.float32)
 
-    # 4. Final buckling factor calculation (only run when use_buckling=True)
-    if use_buckling:
-        final_buckle = solve_inplane_buckling(
-            U, xPhys, edofMat, fixeddofs, nelx, nely,
-            E=Emax, nu=nu, density_threshold=0.25, num_modes=2
-        )
-        if final_buckle is not None and "critical_factor" in final_buckle:
-            final_lambda_1 = float(final_buckle["critical_factor"])
-        else:
-            final_lambda_1 = 999.0
+    # 4. Final buckling factor calculation (always computed for head-to-head comparison)
+    final_buckle = solve_inplane_buckling(
+        U, xPhys, edofMat, fixeddofs, nelx, nely,
+        E=Emax, nu=nu, density_threshold=0.25, num_modes=2
+    )
+    if final_buckle is not None and "critical_factor" in final_buckle:
+        final_lambda_1 = float(final_buckle["critical_factor"])
     else:
-        final_lambda_1 = 0.0
+        final_lambda_1 = 999.0
 
     # Final element strain energy map
     e_elem = ((Emin + (xPhys ** penal) * (Emax - Emin)) * ce).reshape((nely, nelx), order='F')
@@ -771,7 +765,7 @@ def solve_simp_unified(nelx, nely, volfrac, penal, fixeddofs, F,
 
     compliance_reduction_pct = ((initial_compliance - compliance) / max(1e-9, initial_compliance)) * 100.0
     actual_vf = float(np.mean(final_density))
-    volume_reduction_pct = (1.0 - float(volfrac)) * 100.0
+    volume_reduction_pct = (1.0 - actual_vf) * 100.0
 
     if verbose:
         print(f"--- Solved in {elapsed_time:.2f}s ({loop} iters) | C: {initial_compliance:.2f} -> {compliance:.2f} (-{compliance_reduction_pct:.1f}%) | lambda_1: {final_lambda_1:.2f} | Actual Vf: {actual_vf:.3f} ---")

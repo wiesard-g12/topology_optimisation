@@ -53,7 +53,7 @@ def compute_metrics(preds, targets):
     mse = torch.mean((preds - targets) ** 2).item()
     mae = torch.mean(torch.abs(preds - targets)).item()
 
-    bin_preds = (preds >= 0.35).float()
+    bin_preds = (preds >= 0.5).float()
     bin_targets = (targets >= 0.5).float()
 
     acc = (bin_preds == bin_targets).float().mean().item()
@@ -146,8 +146,10 @@ def train_one_epoch_rl(model, ref_model, loader, criterion, judge_env, optimizer
     n_judge = max(1, judge_steps)
     summary = {
         k: running[k] / n_batches
-        for k in ['total', 'bce', 'dice', 'vf_mse', 'bin', 'stiff', 'edge', 'fea_judge', 'judge_oc', 'ref_anchor']
+        for k in ['total', 'bce', 'dice', 'vf_mse', 'bin', 'stiff', 'edge', 'ref_anchor']
     }
+    summary['fea_judge'] = running['fea_judge'] / n_judge
+    summary['judge_oc'] = running['judge_oc'] / n_judge
     summary['fea_ratio'] = running['fea_ratio'] / n_judge
     summary['reward'] = running['reward'] / n_judge
     summary['batch_stable_pct'] = running['batch_stable_pct'] / n_judge
@@ -449,7 +451,7 @@ def train_rl(args):
 def main():
     parser = argparse.ArgumentParser(description="SIMP-Judge RL Fine-Tuning for TopoUNet")
     parser.add_argument("--dataset", type=str, default="topo_dataset_3000.npz", help="Path to .npz dataset")
-    parser.add_argument("--resume", type=str, default="checkpoints/best_unet_3000.pth", help="Warm-start checkpoint")
+    parser.add_argument("--resume", type=str, default="checkpoints/best_unet.pth", help="Warm-start checkpoint")
     parser.add_argument("--epochs", type=int, default=8, help="Number of RL fine-tuning epochs")
     parser.add_argument("--batch_size", type=int, default=16, help="Mini-batch size (16 uses <1 GB VRAM on RTX 3050)")
     parser.add_argument("--lr", type=float, default=1.5e-4, help="Fine-tuning learning rate")

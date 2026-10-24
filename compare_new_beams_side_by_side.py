@@ -298,7 +298,7 @@ def plot_4way_beam_comparison(res, output_path):
     inp_np = res["inp_np"]
     nelx, nely = inp_np.shape[2], inp_np.shape[1]
     ch_bc = np.clip(inp_np[1] + inp_np[2], 0.0, 1.0)
-    loads = extract_discrete_loads(inp_np[3] * 4.0, inp_np[4] * 4.0)
+    loads = extract_discrete_loads(inp_np[3], inp_np[4])
 
     methods = ["unopt", "simp", "base_unet", "rl_unet"]
     fig, axes = plt.subplots(2, 4, figsize=(24, 9.5), dpi=160)
@@ -365,10 +365,11 @@ def plot_4way_beam_comparison(res, output_path):
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Loading Baseline U-Net (best_unet_3000.pth) and SIMP-Judge RL U-Net (best_unet_rl.pth) on {device}...")
+    base_ckpt_path = "checkpoints/best_unet.pth" if os.path.exists("checkpoints/best_unet.pth") else "checkpoints/best_unet_3000.pth"
+    print(f"Loading Baseline U-Net ({base_ckpt_path}) and SIMP-Judge RL U-Net (checkpoints/best_unet_rl.pth) on {device}...")
 
     model_base = TopoUNet(in_channels=6, out_channels=1).to(device).eval()
-    ckpt_base = torch.load("checkpoints/best_unet_3000.pth", map_location=device)
+    ckpt_base = torch.load(base_ckpt_path, map_location=device)
     model_base.load_state_dict(ckpt_base["model_state_dict"] if "model_state_dict" in ckpt_base else ckpt_base)
 
     model_rl = TopoUNet(in_channels=6, out_channels=1).to(device).eval()

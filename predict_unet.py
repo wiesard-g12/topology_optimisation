@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 import torch
 from unet_model import TopoUNet
 from dataset import TopoDataset
-from losses import check_structural_stability
+from losses import check_structural_stability, physics_aware_binarize
 from visualize_data import extract_discrete_loads, draw_loads, draw_domain_and_bcs
 
 
@@ -58,8 +58,8 @@ def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_
     pred_vf = float(np.mean(pred_density))
     gt_vf = float(np.mean(target_density))
 
-    # Calculate metrics
-    bin_pred = (pred_density >= threshold).astype(float)
+    # Calculate metrics using physics-aware binarization
+    bin_pred = physics_aware_binarize(pred_density, input_tensor, threshold=threshold)
     bin_gt = (target_density >= 0.5).astype(float)
 
     intersection = np.sum(bin_pred * bin_gt)
@@ -73,7 +73,8 @@ def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_
         pred_density=pred_density,
         inp_np=input_tensor,
         simp_density=target_density,
-        threshold=threshold
+        threshold=threshold,
+        bin_pred_override=bin_pred
     )
 
     fig, axes = plt.subplots(1, 5, figsize=(25, 4.8), dpi=180)
@@ -229,8 +230,12 @@ def benchmark_and_evaluate(checkpoint_path, dataset_path, output_dir="images",
             x, y = batch_item[0], batch_item[1]
             x_tensor = x.unsqueeze(0).to(device)
 
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
             t0 = time.perf_counter()
             pred = model(x_tensor)
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
             t1 = time.perf_counter()
             lat = (t1 - t0) * 1000.0
 
@@ -276,8 +281,8 @@ def benchmark_and_evaluate(checkpoint_path, dataset_path, output_dir="images",
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate and Visualize TopoUNet Predictions")
-    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet.pth", help="Model checkpoint path")
-    parser.add_argument("--dataset", type=str, default="topo_dataset_1000.npz", help="Dataset path")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet_rl.pth", help="Model checkpoint path")
+    parser.add_argument("--dataset", type=str, default="topo_dataset_3000.npz", help="Dataset path")
     parser.add_argument("--output_dir", type=str, default="images", help="Output directory for prediction figures")
     parser.add_argument("--num_viz", type=int, default=5, help="Number of samples to visualize")
     parser.add_argument("--threshold", type=float, default=0.35, help="Binarization cutoff threshold")

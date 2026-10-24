@@ -32,15 +32,19 @@ from unet_model import TopoUNet
 from interactive_demo import build_benchmark_problem
 from visualize_data import extract_discrete_loads, draw_loads, draw_domain_and_bcs
 from simp_solver import MATERIALS, analyze_structural_integrity
-from losses import check_structural_stability
+from losses import check_structural_stability, physics_aware_binarize, reconstruct_fea_boundary_conditions
 from dataset_generator import precompute_mesh_and_filter
 
 
-def load_model(checkpoint_path="checkpoints/best_unet.pth", device=None):
+def load_model(checkpoint_path="checkpoints/best_unet_rl.pth", device=None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if not os.path.exists(checkpoint_path):
-        raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
+        alt = "checkpoints/best_unet.pth"
+        if os.path.exists(alt):
+            checkpoint_path = alt
+        else:
+            raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
     model = TopoUNet(in_channels=6, out_channels=1)
     ckpt = torch.load(checkpoint_path, map_location=device)
     state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
@@ -54,10 +58,13 @@ def load_model(checkpoint_path="checkpoints/best_unet.pth", device=None):
     return model, device
 
 
-def get_sample_data(sample_idx=None, case_name='cantilever', volfrac=0.40, dataset_path="topo_dataset_1000.npz"):
+def get_sample_data(sample_idx=None, case_name='cantilever', volfrac=0.40, dataset_path="topo_dataset_3000.npz"):
     if sample_idx is not None:
         if not os.path.exists(dataset_path):
-            dataset_path = "topo_dataset.npz"
+            for alt in ("topo_dataset_3000.npz", "topo_dataset_1000.npz", "topo_dataset.npz"):
+                if os.path.exists(alt):
+                    dataset_path = alt
+                    break
         data = np.load(dataset_path)
         input_tensor = data['inputs'][sample_idx]
         if input_tensor.shape[0] == 5:
@@ -90,7 +97,7 @@ def visualize_comparison(input_tensor, simp_density, title, target_vf, model, de
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
     pred_vf = float(np.mean(pred_density))
-    bin_pred = (pred_density >= threshold).astype(float)
+    bin_pred = physics_aware_binarize(pred_density, input_tensor, threshold=threshold)
     bin_vf = float(np.mean(bin_pred))
 
     dice = None
@@ -108,7 +115,8 @@ def visualize_comparison(input_tensor, simp_density, title, target_vf, model, de
         pred_density=pred_density,
         inp_np=input_tensor,
         simp_density=simp_density,
-        threshold=threshold
+        threshold=threshold,
+        bin_pred_override=bin_pred
     )
 
     fig = plt.figure(figsize=(22, 9), dpi=160)
@@ -171,7 +179,7 @@ def visualize_comparison(input_tensor, simp_density, title, target_vf, model, de
     conn_str = "Connected" if stab['is_connected'] else "DISCONNECTED"
     ax3.set_title(
         rf"4. Binarized Truss ($\hat{{y}} \geq {threshold:.2f}$) [{stab['short_badge']}]" + "\n" +
-        f"$V_f={bin_vf:.3f}${dice_str} | FoS={stab['fos_yield']:.2f} | $\lambda_1$={stab['lambda_1']:.1f}",
+        rf"$V_f={bin_vf:.3f}${dice_str} | FoS={stab['fos_yield']:.2f} | $\lambda_1$={stab['lambda_1']:.1f}",
         fontsize=10.5, fontweight='bold', color=stab['badge_color'], pad=8
     )
     ax3.text(
@@ -418,7 +426,9 @@ def visualize_stress_recovery(sample_idx=1, material='steel', force_mag=1500.0,
     mat = MATERIALS.get(material.lower(), MATERIALS['steel'])
 
     # Load dataset sample
-    dataset_path = "topo_dataset_1000.npz" if os.path.exists("topo_dataset_1000.npz") else "topo_dataset.npz"
+    dataset_path = "topo_dataset_3000.npz" if os.path.exists("topo_dataset_3000.npz") else (
+        "topo_dataset_1000.npz" if os.path.exists("topo_dataset_1000.npz") else "topo_dataset.npz"
+    )
     data = np.load(dataset_path)
     input_tensor = data['inputs'][sample_idx]
     if input_tensor.shape[0] == 5:
@@ -433,48 +443,11 @@ def visualize_stress_recovery(sample_idx=1, material='steel', force_mag=1500.0,
     with torch.no_grad():
         pred_tensor = model(tensor_x)
     pred_density = pred_tensor.squeeze().cpu().numpy()
-    bin_pred = (pred_density >= 0.35).astype(float)
+    bin_pred = physics_aware_binarize(pred_density, input_tensor, threshold=0.35)
 
-    # Reconstruct load candidates and fixtures from input channels
+    # Reconstruct exact nodal fixtures and forces from input channels
     edofMat, iK, jK, H, Hs = precompute_mesh_and_filter(nelx, nely, 1.5)
-
-    # Extract fixed DOFs from channel 1 (bc_x) and channel 2 (bc_y)
-    ch_bc_x = input_tensor[1]
-    ch_bc_y = input_tensor[2]
-    fixed_dofs = []
-    for y in range(nely):
-        for x in range(nelx):
-            nodes = [
-                x * (nely + 1) + y,
-                (x + 1) * (nely + 1) + y,
-                (x + 1) * (nely + 1) + y + 1,
-                x * (nely + 1) + y + 1
-            ]
-            if ch_bc_x[y, x] > 0.05:
-                for n in nodes:
-                    fixed_dofs.append(2*n)
-            if ch_bc_y[y, x] > 0.05:
-                for n in nodes:
-                    fixed_dofs.append(2*n + 1)
-    fixed_dofs = np.unique(fixed_dofs) if len(fixed_dofs) > 0 else np.array([0, 1], dtype=int)
-
-    # Extract loads from channel 3 & 4
-    ch_fx = input_tensor[3]
-    ch_fy = input_tensor[4]
-    ndof = 2 * (nelx + 1) * (nely + 1)
-    F = np.zeros(ndof)
-    for y in range(nely):
-        for x in range(nelx):
-            if abs(ch_fx[y, x]) > 1e-4 or abs(ch_fy[y, x]) > 1e-4:
-                nodes = [
-                    x * (nely + 1) + y,
-                    (x + 1) * (nely + 1) + y,
-                    (x + 1) * (nely + 1) + y + 1,
-                    x * (nely + 1) + y + 1
-                ]
-                for n in nodes:
-                    F[2*n] += 0.25 * ch_fx[y, x] * force_mag
-                    F[2*n + 1] += 0.25 * ch_fy[y, x] * force_mag
+    fixed_dofs, F = reconstruct_fea_boundary_conditions(input_tensor, nelx, nely)
 
     # Solve FEA & Stress for SIMP
     res_simp = analyze_structural_integrity(
@@ -699,9 +672,9 @@ def main():
     parser.add_argument("--threshold", type=float, default=0.35, help="Binarization cutoff threshold")
     parser.add_argument("--material", type=str, default="steel", help="Material preset for stress mode")
     parser.add_argument("--force", type=float, default=1500.0, help="Force magnitude (N) for stress mode")
-    parser.add_argument("--dataset", type=str, default="topo_dataset_1000.npz", help="Dataset path")
+    parser.add_argument("--dataset", type=str, default="topo_dataset_3000.npz", help="Dataset path")
     parser.add_argument("--num_samples", type=int, default=50, help="Number of samples for batch scorecard")
-    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet.pth", help="Model checkpoint")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet_rl.pth", help="Model checkpoint")
     parser.add_argument("--output", type=str, default=None, help="Output image file path")
     args = parser.parse_args()
 

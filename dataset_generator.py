@@ -364,7 +364,7 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
     else:
         use_benchmark = (rng.uniform() < 0.4)
         if use_benchmark:
-            bm_type = int(rng.choice([0, 1, 2, 3]))
+            bm_type = int(rng.choice([0, 1, 2, 3, 4]))
         else:
             bm_type = -1
 
@@ -378,8 +378,8 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
             load_candidates = [get_nid(nelx, y) for y in range(nely + 1)]
         elif bm_type == 1:  # MBB Beam: Symmetry roller left wall, roller bottom-right
             case_name = 'mbb'
-            fixed_nodes = [get_nid(0, y) for y in [0, nely//2, nely]] + [get_nid(nelx, nely)]
-            fixed_dofs = [2*get_nid(0, y) for y in [0, nely//2, nely]] + [2*get_nid(nelx, nely) + 1]
+            fixed_nodes = [get_nid(0, y) for y in range(nely + 1)] + [get_nid(nelx, nely)]
+            fixed_dofs = [2*get_nid(0, y) for y in range(nely + 1)] + [2*get_nid(nelx, nely) + 1]
             load_candidates = [get_nid(0, 0), get_nid(nelx//4, 0)]
         elif bm_type == 2:  # Bridge Truss: Bottom-left pin, bottom-right roller
             case_name = 'bridge'
@@ -388,13 +388,13 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
             fixed_nodes = [n_bl, n_br]
             fixed_dofs = [2*n_bl, 2*n_bl + 1, 2*n_br + 1]
             load_candidates = [get_nid(x, 0) for x in range(nelx // 6, 5 * nelx // 6 + 1)]
-        elif bm_type == 3:  # Arch / 2-support crane: Top-left pin, bottom-left pin
+        elif bm_type == 3:  # Arch / 2-support crane: Top-left pin, bottom-left roller, tip load
             case_name = 'crane'
             n_tl = get_nid(0, 0)
             n_bl = get_nid(0, nely)
             fixed_nodes = [n_tl, n_bl]
-            fixed_dofs = [2*n_tl, 2*n_tl + 1, 2*n_bl, 2*n_bl + 1]
-            load_candidates = [get_nid(nelx, nely // 2), get_nid(nelx, nely), get_nid(nelx, 0)]
+            fixed_dofs = [2*n_tl, 2*n_tl + 1, 2*n_bl]
+            load_candidates = [get_nid(nelx, nely), get_nid(3 * nelx // 4, nely)]
         else:  # Michell Truss: Bottom-left pin, bottom-right roller, center load
             case_name = 'michell'
             n_bl = get_nid(0, nely)
@@ -414,9 +414,9 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
         s1 = support_nodes[0]
         s2 = support_nodes[1]
         c1, c2 = coords[s1], coords[s2]
-        dist = np.sqrt((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2)
+        dist = np.hypot(c1[0] - c2[0], c1[1] - c2[1])
         if dist < 15:
-            if s1 != get_nid(nelx, nely):
+            if np.hypot(c1[0] - nelx, c1[1] - nely) >= 15:
                 s2 = get_nid(nelx, nely)
             else:
                 s2 = get_nid(0, 0)
@@ -434,6 +434,15 @@ def sample_problem(sample_id, nelx=120, nely=60, penal=3.0, rmin=1.5, max_iter=8
             fixed_dofs.append(2*s2)
             if rng.uniform() > 0.5:
                 fixed_dofs.append(2*s2 + 1)
+
+        # Attach additional sampled Poisson supports as rollers/pins
+        for s_extra in support_nodes[2:]:
+            if s_extra not in fixed_nodes:
+                fixed_nodes.append(s_extra)
+                if rng.uniform() > 0.5:
+                    fixed_dofs.append(2*s_extra + 1)
+                else:
+                    fixed_dofs.append(2*s_extra)
             
         load_candidates = [n for n in nodes if coords[n][0] == 0 or coords[n][0] == nelx or
                            coords[n][1] == 0 or coords[n][1] == nely]

@@ -73,7 +73,7 @@ def build_benchmark_problem(case_name, volfrac=0.40, nelx=120, nely=60, load_ang
 
     elif case_name == 'mbb':
         # Left wall symmetry roller (fix X), bottom-right vertical roller (fix Y)
-        for y in [0, nely // 2, nely]:
+        for y in range(nely + 1):
             fixed_grid_x[y, 0] = 1.0
             n = get_nid(0, y)
             fixed_dofs.append(2*n) # fix X
@@ -336,8 +336,8 @@ def main():
                         help="Benchmark structural case")
     parser.add_argument("--volfrac", type=float, default=0.40, help="Target volume fraction (0.20 to 0.60)")
     parser.add_argument("--sample_idx", type=int, default=None, help="Inspect dataset sample directly by index")
-    parser.add_argument("--dataset", type=str, default="topo_dataset_1000.npz", help="Dataset path")
-    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet.pth", help="Checkpoint path")
+    parser.add_argument("--dataset", type=str, default="topo_dataset_3000.npz", help="Dataset path")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_unet_rl.pth", help="Checkpoint path")
     parser.add_argument("--compare_simp", action="store_true", help="Run SIMP solver side-by-side for verification")
     parser.add_argument("--simp_iters", type=int, default=40, help="SIMP iterations if compare_simp is enabled")
     parser.add_argument("--threshold", type=float, default=0.35, help="Binarization cutoff threshold")

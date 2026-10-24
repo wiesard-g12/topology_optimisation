@@ -234,13 +234,14 @@ class UpBlock(nn.Module):
     Upsampling block: Bilinear upsample / ConvTranspose2d followed by skip connection
     concatenation and ResFiLMBlock.
     """
-    def __init__(self, in_channels, out_channels, bilinear=True, cond_dim=64):
+    def __init__(self, in_channels, out_channels, bilinear=True, cond_dim=64, up_in_channels=None):
         super().__init__()
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
             self.conv = ResFiLMBlock(in_channels, out_channels, cond_dim=cond_dim)
         else:
-            self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+            c_up = up_in_channels if up_in_channels is not None else (in_channels * 2) // 3
+            self.up = nn.ConvTranspose2d(c_up, c_up // 2, kernel_size=2, stride=2)
             self.conv = ResFiLMBlock(in_channels, out_channels, cond_dim=cond_dim)
 
     def forward(self, x1, x2, cond_emb):
@@ -388,6 +389,8 @@ class DifferentiableVolumeProjection(nn.Module):
             mu = mu - step
 
         out = torch.sigmoid(z_tilde + mu)
+        if domain_mask is not None:
+            out = out * domain_mask
         return out
 
 
