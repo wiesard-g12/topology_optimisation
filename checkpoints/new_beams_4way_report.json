@@ -1,0 +1,120 @@
+{
+  "cantilever_beam": {
+    "beam_name": "New Random Cantilever Beam (Dual Left Pins, Angled Tip Load @ x=120, y=40)",
+    "volfrac": 0.3600000739097595,
+    "force_real_N": 1500.0,
+    "methods": {
+      "unopt": {
+        "compliance": 1233.5182519409782,
+        "fea_ratio": 59.3478467563355,
+        "fos_yield": 0.5193936398325827,
+        "lambda_1": 999.0,
+        "max_defl_mm": 0.9986215763160373,
+        "vm_95th_mpa": 481.3304993118178,
+        "vf_actual": 0.3600000739097595,
+        "dice": 0.0,
+        "time_ms": 0.0,
+        "is_stable": false,
+        "status_badge": "POOR STIFFNESS (59.3x Compliance)"
+      },
+      "simp": {
+        "compliance": 20.784549387367584,
+        "fea_ratio": 1.0,
+        "fos_yield": 1.7714145062708928,
+        "lambda_1": 2.9876931103493383,
+        "max_defl_mm": 0.27263044536483855,
+        "vm_95th_mpa": 141.13015283265784,
+        "vf_actual": 0.3522222222222222,
+        "dice": 1.0,
+        "time_ms": 13676.21639999561,
+        "is_stable": true,
+        "status_badge": "STABLE (SIMP OPTIMUM)"
+      },
+      "base_unet": {
+        "compliance": 144.77102454335306,
+        "fea_ratio": 6.965319374753531,
+        "fos_yield": 0.4278326822178892,
+        "lambda_1": 1.0361211478768206,
+        "max_defl_mm": 2.079898495235574,
+        "vm_95th_mpa": 584.3405854456861,
+        "vf_actual": 0.36930555555555555,
+        "dice": 0.7484119346008831,
+        "time_ms": 463.38919999834616,
+        "is_stable": false,
+        "status_badge": "CAN BREAK / UNSTABLE (Excessive Compliance (6.97x), Stress Overload (FoS=0.43))"
+      },
+      "rl_unet": {
+        "compliance": 23.087735737771176,
+        "fea_ratio": 1.1108124264557508,
+        "fos_yield": 1.4468713531259823,
+        "lambda_1": 3.8580561759285485,
+        "max_defl_mm": 0.30396638398257614,
+        "vm_95th_mpa": 172.78661261754246,
+        "vf_actual": 0.36,
+        "dice": 0.735959438429025,
+        "time_ms": 54.231399997661356,
+        "is_stable": true,
+        "status_badge": "STABLE (SAFE - MINOR STIFFNESS LOSS)"
+      }
+    }
+  },
+  "bridge_beam": {
+    "beam_name": "New Random Multi-Support Bridge Beam (Left Pins + Right Roller, Span Load @ x=76, y=0)",
+    "volfrac": 0.3800000548362732,
+    "force_real_N": 1500.0,
+    "methods": {
+      "unopt": {
+        "compliance": 118.48904789146083,
+        "fea_ratio": 56.69531842076692,
+        "fos_yield": 2.1854904977643224,
+        "lambda_1": 999.0,
+        "max_defl_mm": 0.08970877588269249,
+        "vm_95th_mpa": 114.39079705710859,
+        "vf_actual": 0.3800000548362732,
+        "dice": 0.0,
+        "time_ms": 0.0,
+        "is_stable": false,
+        "status_badge": "POOR STIFFNESS (56.7x Compliance)"
+      },
+      "simp": {
+        "compliance": 2.0899264911449813,
+        "fea_ratio": 1.0,
+        "fos_yield": 5.639010790768803,
+        "lambda_1": 18.835514796170994,
+        "max_defl_mm": 0.02620046122945785,
+        "vm_95th_mpa": 44.334016953691666,
+        "vf_actual": 0.37333333333333335,
+        "dice": 1.0,
+        "time_ms": 11973.507199996675,
+        "is_stable": true,
+        "status_badge": "STABLE (SIMP OPTIMUM)"
+      },
+      "base_unet": {
+        "compliance": 7.100644248340439,
+        "fea_ratio": 3.3975569372539507,
+        "fos_yield": 2.166841326378778,
+        "lambda_1": 3.3344521033791974,
+        "max_defl_mm": 0.11692507795336443,
+        "vm_95th_mpa": 115.37531472957343,
+        "vf_actual": 0.37416666666666665,
+        "dice": 0.5811965812743967,
+        "time_ms": 54.573199995502364,
+        "is_stable": false,
+        "status_badge": "CAN BREAK / UNSTABLE (Excessive Compliance (3.40x), Stress Overload (FoS=2.17))"
+      },
+      "rl_unet": {
+        "compliance": 2.8702403494603796,
+        "fea_ratio": 1.3733690450939726,
+        "fos_yield": 4.3574504303427934,
+        "lambda_1": 5.0034849509030455,
+        "max_defl_mm": 0.03619503510408737,
+        "vm_95th_mpa": 57.37299918758423,
+        "vf_actual": 0.38,
+        "dice": 0.6655604720380603,
+        "time_ms": 53.82420000387356,
+        "is_stable": true,
+        "status_badge": "STABLE (SAFE - MINOR STIFFNESS LOSS)"
+      }
+    }
+  }
+}

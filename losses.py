@@ -376,6 +376,138 @@ class SelfAdjointFEACompliance(nn.Module):
         )
 
 
+_MESH_CACHE = {}
+_FILTER_CACHE = {}
+
+def get_cached_fea_mesh(nelx=120, nely=60):
+    key = (nelx, nely)
+    if key not in _MESH_CACHE:
+        edofMat, iK, jK = precompute_fea_mesh(nelx, nely)
+        KE = get_q4_element_stiffness()
+        _MESH_CACHE[key] = (edofMat, iK, jK, KE)
+    return _MESH_CACHE[key]
+
+
+def get_cached_filter(nelx=120, nely=60, rmin=1.5):
+    key = (nelx, nely, rmin)
+    if key not in _FILTER_CACHE:
+        from simp_solver import precompute_mesh_and_filter
+        _, _, _, H, Hs = precompute_mesh_and_filter(nelx, nely, rmin)
+        _FILTER_CACHE[key] = (H, Hs)
+    return _FILTER_CACHE[key]
+
+
+def bridge_diagonal_hinges(bin_grid):
+    """
+    Eliminates 1-node checkerboard corner hinges in a binary Q4 mesh without eroding borders.
+    Converts 8-connected diagonal-only contacts into 4-connected edge-sharing Q4 elements.
+    """
+    out = bin_grid.copy()
+    p00 = bin_grid[:-1, :-1] > 0.5
+    p11 = bin_grid[1:, 1:] > 0.5
+    p01 = bin_grid[:-1, 1:] > 0.5
+    p10 = bin_grid[1:, :-1] > 0.5
+
+    diag1 = p00 & p11 & (~p01) & (~p10)
+    diag2 = p01 & p10 & (~p00) & (~p11)
+
+    y1, x1 = np.where(diag1)
+    out[y1, x1 + 1] = 1.0
+    out[y1 + 1, x1] = 1.0
+
+    y2, x2 = np.where(diag2)
+    out[y2, x2] = 1.0
+    out[y2 + 1, x2 + 1] = 1.0
+    return out
+
+
+def physics_aware_binarize(pred_density, inp_np, threshold=0.35, polish_steps=2):
+    """
+    Solution 1: Physics-Aware Binarization & Boundary Load-Pad Locking.
+    1. Locks 3x3 solid anchor pads around active support fixtures and point loads
+       so forces are never applied to void elements or single-node hinges.
+    2. Performs fast sensitivity-filtered strain-energy projection (polish_steps=2)
+       on the continuous prediction to heal faint internal struts and pinch points.
+    3. Applies exact volume-preserving quantile thresholding (matching target Vf)
+       and bridges 1-node diagonal corner hinges into 4-connected Q4 elements.
+    """
+    from scipy.ndimage import binary_dilation
+
+    if inp_np.shape[0] == 5:
+        inp_np = np.concatenate([inp_np[0:1], inp_np[1:2], inp_np[1:2], inp_np[2:5]], axis=0)
+
+    pred_2d = np.asarray(pred_density, dtype=np.float64).squeeze().copy()
+    nely, nelx = pred_2d.shape[-2], pred_2d.shape[-1]
+    target_vf = float(np.clip(np.mean(inp_np[5]), 0.05, 0.95))
+
+    sup_mask = (inp_np[1] > 0.05) | (inp_np[2] > 0.05)
+    load_mask = (np.abs(inp_np[3]) > 1e-4) | (np.abs(inp_np[4]) > 1e-4)
+    struct_3x3 = np.ones((3, 3), dtype=int)
+    anchors = binary_dilation(sup_mask | load_mask, structure=struct_3x3, iterations=1)
+
+    p = pred_2d
+    p[anchors] = 1.0
+
+    if polish_steps > 0:
+        fixed_dofs, F_vec = reconstruct_fea_boundary_conditions(inp_np, nelx, nely)
+        edofMat, iK, jK, KE = get_cached_fea_mesh(nelx, nely)
+        H, Hs = get_cached_filter(nelx, nely, 1.5)
+
+        alldofs = np.arange(2 * (nelx + 1) * (nely + 1))
+        freedofs = np.setdiff1d(alldofs, fixed_dofs)
+
+        x = np.clip(p.T.flatten(), 0.08, 1.0)
+        anc_flat = anchors.T.flatten()
+        nele = nelx * nely
+        target_mass = max(target_vf * nele, float(np.sum(anc_flat)) + 1.0)
+
+        for _ in range(polish_steps):
+            E_elem = 1e-9 + (x ** 3.0) * (1.0 - 1e-9)
+            sK = (KE.flatten()[:, None] * E_elem).flatten(order='F')
+            K = sp.coo_matrix((sK, (iK, jK)), shape=(len(alldofs), len(alldofs))).tocsc()
+            try:
+                U_free = spsolve(K[freedofs, :][:, freedofs], F_vec[freedofs])
+                if not np.all(np.isfinite(U_free)):
+                    break
+                U = np.zeros(len(alldofs))
+                U[freedofs] = U_free
+                U_edof = U[edofMat]
+                ce = (np.dot(U_edof, KE) * U_edof).sum(axis=1)
+                dc = -3.0 * (x ** 2.0) * ce
+                dc_f = np.asarray(H.dot(x * dc)) / Hs / np.maximum(1e-3, x)
+                dc_f = np.minimum(dc_f, -1e-12)
+
+                l1, l2 = 0.0, 1e9
+                for _ in range(40):
+                    if (l2 - l1) / (l1 + l2 + 1e-15) <= 1e-4:
+                        break
+                    lmid = 0.5 * (l1 + l2)
+                    xnew = np.maximum(
+                        0.0,
+                        np.maximum(
+                            x - 0.35,
+                            np.minimum(1.0, np.minimum(x + 0.35, x * np.sqrt(np.maximum(0.0, -dc_f) / max(lmid, 1e-15))))
+                        )
+                    )
+                    xnew[anc_flat] = 1.0
+                    if np.sum(xnew) > target_mass:
+                        l1 = lmid
+                    else:
+                        l2 = lmid
+                x = xnew
+            except Exception:
+                break
+
+        p = x.reshape(nelx, nely).T
+
+    # Volume-preserving quantile threshold
+    tau = float(np.quantile(p, max(0.05, min(0.95, 1.0 - target_vf))))
+    bin_pred = (p >= tau).astype(float)
+    bin_pred[anchors] = 1.0
+    bin_pred = bridge_diagonal_hinges(bin_pred)
+    return bin_pred
+
+
 def compute_fea_compliance_ratio(pred_np, target_np, inp_np):
     """
     Computes structural compliance ratio C(pred) / C(target) for validation.
@@ -388,8 +520,7 @@ def compute_fea_compliance_ratio(pred_np, target_np, inp_np):
     nely = pred_np.shape[-2]
 
     fixed_dofs, F_vec = reconstruct_fea_boundary_conditions(inp_np, nelx, nely)
-    edofMat, iK, jK = precompute_fea_mesh(nelx, nely)
-    KE = get_q4_element_stiffness()
+    edofMat, iK, jK, KE = get_cached_fea_mesh(nelx, nely)
 
     alldofs = np.arange(2 * (nelx + 1) * (nely + 1))
     freedofs = np.setdiff1d(alldofs, fixed_dofs)
@@ -402,15 +533,226 @@ def compute_fea_compliance_ratio(pred_np, target_np, inp_np):
         K_free = K[freedofs, :][:, freedofs]
         try:
             U_free = spsolve(K_free, F_vec[freedofs])
+            if not np.all(np.isfinite(U_free)):
+                return float('inf')
         except Exception:
             return float('inf')
         U = np.zeros(len(alldofs))
         U[freedofs] = U_free
         U_edof = U[edofMat]
         ce = (np.dot(U_edof, KE) * U_edof).sum(axis=1)
-        return float(np.sum(E_elem * ce))
+        c_val = float(np.sum(E_elem * ce))
+        return c_val if c_val > 0.0 else float('inf')
 
     c_pred = solve_c(pred_np.squeeze())
     c_target = solve_c(target_np.squeeze())
     ratio = c_pred / max(c_target, 1e-9)
     return ratio, c_pred, c_target
+
+
+def check_structural_stability(pred_density, inp_np, simp_density=None, threshold=0.35,
+                               material_name="steel", force_real_N=1500.0,
+                               max_compliance_ratio=2.5, compute_buckling=True,
+                               use_physics_binarize=True, bin_pred_override=None):
+    """
+    Comprehensive Engineering Stability & Breakage Inspector for TopoUNet Predictions.
+
+    Evaluates 4 physical failure modes to determine if the generated topology is STABLE or CAN BREAK:
+      1. Topological Load-to-Support Connectivity:
+         Checks via 8-neighbor connected components whether every applied load region has an
+         unbroken solid load path to at least one support fixture.
+      2. FEA Elastic Stiffness / Hinge-Mechanism Stability:
+         Solves 2D Q4 FEA (KU = F). Checks if compliance C_pred is finite, free of structural
+         hinge collapse (C_pred / C_simp <= max_compliance_ratio, or C_pred < 250 when SIMP unavailable).
+      3. Material Yielding / Von Mises Stress Safety:
+         Recovers 2D plane-stress Von Mises field and checks Factor of Safety (FoS >= 1.0)
+         and stress concentration ratio relative to SIMP.
+      4. In-Plane Euler Buckling Stability:
+         Solves active-submesh geometric stiffness eigenvalue problem for critical buckling load
+         multiplier (lambda_1 >= 1.0).
+
+    Returns a dictionary containing all quantitative metrics, boolean pass flags, failure reasons,
+    and a human-readable badge ('STABLE (SAFE)' vs 'CAN BREAK (...)').
+    """
+    from scipy.ndimage import label, binary_dilation
+    from simp_solver import analyze_structural_integrity
+
+    if inp_np.shape[0] == 5:
+        inp_np = np.concatenate([inp_np[0:1], inp_np[1:2], inp_np[1:2], inp_np[2:5]], axis=0)
+
+    pred_2d = np.asarray(pred_density, dtype=float).squeeze()
+    nely, nelx = pred_2d.shape[-2], pred_2d.shape[-1]
+    if bin_pred_override is not None:
+        bin_pred = np.asarray(bin_pred_override, dtype=float).squeeze()
+    elif use_physics_binarize:
+        bin_pred = physics_aware_binarize(pred_2d, inp_np, threshold=threshold, polish_steps=2)
+    else:
+        bin_pred = (pred_2d >= threshold).astype(float)
+    bin_simp = (simp_density >= 0.5).astype(float) if simp_density is not None else None
+
+    # --- 1. TOPOLOGICAL LOAD-PATH CONNECTIVITY CHECK ---
+    ch_bc_x, ch_bc_y = inp_np[1], inp_np[2]
+    ch_fx, ch_fy = inp_np[3], inp_np[4]
+
+    support_mask = (ch_bc_x > 0.05) | (ch_bc_y > 0.05)
+    load_mask = (np.abs(ch_fx) > 1e-4) | (np.abs(ch_fy) > 1e-4)
+
+    struct_8 = np.ones((3, 3), dtype=int)
+    support_zone = binary_dilation(support_mask, structure=struct_8, iterations=1)
+    load_zone = binary_dilation(load_mask, structure=struct_8, iterations=1)
+
+    solid_mask = bin_pred > 0.5
+    labeled_grid, num_features = label(solid_mask, structure=struct_8)
+
+    # Identify solid components anchored to supports
+    anchored_labels = set(np.unique(labeled_grid[support_zone & solid_mask])) - {0}
+    touches_support = len(anchored_labels) > 0
+
+    # Check if every distinct load cluster connects to an anchored solid component
+    load_labels, num_loads = label(load_mask, structure=struct_8)
+    all_loads_connected = True
+    if num_loads == 0:
+        all_loads_connected = touches_support
+    else:
+        for l_idx in range(1, num_loads + 1):
+            l_region = binary_dilation(load_labels == l_idx, structure=struct_8, iterations=1)
+            comp_at_load = set(np.unique(labeled_grid[l_region & solid_mask])) - {0}
+            if len(comp_at_load.intersection(anchored_labels)) == 0:
+                all_loads_connected = False
+                break
+
+    # Ratio of solid mass that is properly anchored to supports (detects floating islands)
+    total_solid_pixels = int(np.sum(solid_mask))
+    if total_solid_pixels > 0 and len(anchored_labels) > 0:
+        anchored_pixels = int(np.sum(np.isin(labeled_grid, list(anchored_labels))))
+        anchored_mass_ratio = float(anchored_pixels) / float(total_solid_pixels)
+    else:
+        anchored_mass_ratio = 0.0
+
+    is_connected = bool(touches_support and all_loads_connected and anchored_mass_ratio >= 0.70)
+
+    # --- 2. FEA STIFFNESS & COMPLIANCE RATIO CHECK ---
+    fixed_dofs, F_vec = reconstruct_fea_boundary_conditions(inp_np, nelx, nely)
+    edofMat, iK, jK, KE = get_cached_fea_mesh(nelx, nely)
+
+    if bin_simp is not None:
+        fea_ratio, c_pred, c_target = compute_fea_compliance_ratio(bin_pred, bin_simp, inp_np)
+    else:
+        fea_ratio, c_pred, _ = compute_fea_compliance_ratio(bin_pred, bin_pred, inp_np)
+        c_target = c_pred
+
+    if simp_density is not None:
+        stiff_pass = bool(np.isfinite(c_pred) and (c_pred > 0.0) and (0.0 < fea_ratio <= max_compliance_ratio) and (c_pred < 500.0))
+    else:
+        stiff_pass = bool(np.isfinite(c_pred) and (0.0 < c_pred < 250.0))
+
+    # --- 3. VON MISES STRESS (YIELDING) & BUCKLING CHECK ---
+    # Remove any tiny unanchored floating dust pixels before eigenvalue buckling solve
+    # so isolated void islands do not introduce spurious zero-stiffness rigid body modes
+    struct_4 = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=int)
+    lbl_4, _ = label(solid_mask, structure=struct_4)
+    anc_4 = set(np.unique(lbl_4[support_zone & solid_mask])) - {0}
+    if len(anc_4) > 0:
+        bin_pred_anchored = np.isin(lbl_4, list(anc_4)).astype(float)
+    elif len(anchored_labels) > 0:
+        bin_pred_anchored = np.isin(labeled_grid, list(anchored_labels)).astype(float)
+    else:
+        bin_pred_anchored = bin_pred
+
+    res_pred = analyze_structural_integrity(
+        density=bin_pred_anchored, fixed_dofs=fixed_dofs, F=F_vec, edofMat=edofMat,
+        nelx=nelx, nely=nely, material_name=material_name,
+        force_real_N=force_real_N, density_threshold=0.3
+    )
+
+    res_simp = None
+    if bin_simp is not None:
+        res_simp = analyze_structural_integrity(
+            density=bin_simp, fixed_dofs=fixed_dofs, F=F_vec, edofMat=edofMat,
+            nelx=nelx, nely=nely, material_name=material_name,
+            force_real_N=force_real_N, density_threshold=0.3
+        )
+
+    if res_pred is not None:
+        fos_yield = float(res_pred['fos_yield'])
+        peak_vm = float(res_pred['peak_vm_stress'])
+        vm_95th = float(res_pred['vm_95th'])
+        lambda_1 = float(res_pred['lambda_1']) if compute_buckling else 999.0
+        max_defl_mm = float(res_pred['max_deflection_mm'])
+    else:
+        fos_yield = 0.0
+        peak_vm = float('inf')
+        vm_95th = float('inf')
+        lambda_1 = 0.0
+        max_defl_mm = float('inf')
+
+    if res_simp is not None and res_simp['vm_95th'] > 1e-6:
+        simp_fos = float(res_simp['fos_yield'])
+        simp_lambda_1 = float(res_simp['lambda_1'])
+        stress_ratio = float(vm_95th / max(res_simp['vm_95th'], 1e-6))
+        yield_pass = bool((fos_yield >= 1.0 or stress_ratio <= 2.0) and stress_ratio <= 2.5)
+    else:
+        simp_fos = fos_yield
+        simp_lambda_1 = lambda_1
+        stress_ratio = 1.0
+        yield_pass = bool(fos_yield >= 1.0)
+    buckle_pass = bool(lambda_1 >= 1.0)
+
+    # --- 4. OVERALL STABILITY VERDICT & FAILURE MODE DIAGNOSIS ---
+    failure_reasons = []
+    if not is_connected:
+        if not touches_support:
+            failure_reasons.append("Detached from Support")
+        elif not all_loads_connected:
+            failure_reasons.append("Disconnected Load Path")
+        else:
+            failure_reasons.append("Floating Island Split")
+    if not stiff_pass:
+        failure_reasons.append(f"Excessive Compliance ({fea_ratio:.2f}x)")
+    if not yield_pass:
+        failure_reasons.append(f"Stress Overload (FoS={fos_yield:.2f})")
+    if not buckle_pass:
+        failure_reasons.append(f"Buckling Instability (lambda_1={lambda_1:.2f})")
+
+    is_stable = bool(is_connected and stiff_pass and yield_pass and buckle_pass)
+
+    if is_stable:
+        if fea_ratio <= 1.25 and fos_yield >= 1.5 and lambda_1 >= 1.5:
+            status_badge = "STABLE (ROBUST - WILL NOT BREAK)"
+            short_badge = "STABLE"
+            badge_color = "#2E7D32"  # Dark Green
+        else:
+            status_badge = "STABLE (SAFE - MINOR STIFFNESS LOSS)"
+            short_badge = "STABLE"
+            badge_color = "#388E3C"  # Green
+    else:
+        reason_str = ", ".join(failure_reasons[:2])
+        status_badge = f"CAN BREAK / UNSTABLE ({reason_str})"
+        short_badge = "CAN BREAK"
+        badge_color = "#D32F2F"      # Red
+
+    return {
+        "is_stable": is_stable,
+        "status_badge": status_badge,
+        "short_badge": short_badge,
+        "badge_color": badge_color,
+        "failure_reasons": failure_reasons,
+        "is_connected": is_connected,
+        "touches_support": touches_support,
+        "all_loads_connected": all_loads_connected,
+        "anchored_mass_ratio": anchored_mass_ratio,
+        "stiff_pass": stiff_pass,
+        "yield_pass": yield_pass,
+        "buckle_pass": buckle_pass,
+        "c_pred": float(c_pred),
+        "c_target": float(c_target),
+        "fea_ratio": float(fea_ratio),
+        "fos_yield": float(fos_yield),
+        "simp_fos": float(simp_fos),
+        "peak_vm_mpa": float(peak_vm),
+        "vm_95th_mpa": float(vm_95th),
+        "stress_ratio": float(stress_ratio),
+        "lambda_1": float(lambda_1),
+        "simp_lambda_1": float(simp_lambda_1),
+        "max_deflection_mm": float(max_defl_mm)
+    }

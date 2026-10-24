@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 import torch
 from unet_model import TopoUNet
 from dataset import TopoDataset
+from losses import check_structural_stability
 from visualize_data import extract_discrete_loads, draw_loads, draw_domain_and_bcs
 
 
@@ -68,6 +69,13 @@ def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_
     mse = float(np.mean((pred_density - target_density) ** 2))
     diff = np.abs(pred_density - target_density)
 
+    stab = check_structural_stability(
+        pred_density=pred_density,
+        inp_np=input_tensor,
+        simp_density=target_density,
+        threshold=threshold
+    )
+
     fig, axes = plt.subplots(1, 5, figsize=(25, 4.8), dpi=180)
 
     # --- PANEL 1: Boundary Conditions & Loads ---
@@ -104,13 +112,16 @@ def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_
     ax2.set_aspect('equal')
     ax2.axis('off')
 
-    # --- PANEL 4: U-Net Binarized Output ---
+    # --- PANEL 4: U-Net Binarized Output + Stability Verdict ---
     ax3 = axes[3]
     im3 = ax3.imshow(1.0 - bin_pred, cmap='gray', vmin=0, vmax=1,
                      extent=[0, nelx, nely, 0], interpolation='nearest')
     bin_vf = float(np.mean(bin_pred))
-    ax3.set_title(rf"4. Binarized Topology ($\hat{{y}} \geq {threshold:.2f}$)" + "\n" + f"Dice = {dice:.3f} | $V_f = {bin_vf:.3f}$",
-                  fontsize=11, fontweight='bold', pad=8)
+    ax3.set_title(
+        rf"4. Binarized Topology ($\hat{{y}} \geq {threshold:.2f}$) [{stab['short_badge']}]" + "\n" +
+        f"Dice={dice:.3f} | Ratio={stab['fea_ratio']:.2f}x | FoS={stab['fos_yield']:.2f}",
+        fontsize=10.5, fontweight='bold', color=stab['badge_color'], pad=8
+    )
     ax3.set_xlim(-5, nelx + 5)
     ax3.set_ylim(nely + 5, -5)
     ax3.set_aspect('equal')
@@ -129,12 +140,12 @@ def render_prediction_comparison(sample_idx, input_tensor, target_density, pred_
     cbar = fig.colorbar(im4, ax=ax4, fraction=0.035, pad=0.04)
     cbar.set_label('Error Magnitude', fontsize=9)
 
-    # Figure Super-Title with Benchmark Metadata
+    # Figure Super-Title with Benchmark & Stability Metadata
     fig.suptitle(
         f"Real-Time Topology Prediction | Sample #{sample_idx:03d} | "
-        f"Inference Latency: {latency_ms:.2f} ms | Dice Similarity: {dice:.3f} | "
-        f"Volume Error: |{pred_vf:.3f} - {target_vf:.3f}| = {abs(pred_vf - target_vf):.3f}",
-        fontsize=13, fontweight='bold', y=0.98
+        f"Latency: {latency_ms:.2f} ms | Dice: {dice:.3f} | "
+        f"Stability Verdict: {stab['status_badge']} (FoS={stab['fos_yield']:.2f}, λ₁={stab['lambda_1']:.1f})",
+        fontsize=12.5, fontweight='bold', y=0.98
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.93])

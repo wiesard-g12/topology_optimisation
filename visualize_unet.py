@@ -32,6 +32,7 @@ from unet_model import TopoUNet
 from interactive_demo import build_benchmark_problem
 from visualize_data import extract_discrete_loads, draw_loads, draw_domain_and_bcs
 from simp_solver import MATERIALS, analyze_structural_integrity
+from losses import check_structural_stability
 from dataset_generator import precompute_mesh_and_filter
 
 
@@ -102,6 +103,14 @@ def visualize_comparison(input_tensor, simp_density, title, target_vf, model, de
         mse = float(np.mean((pred_density - simp_density) ** 2))
         diff = np.abs(pred_density - simp_density)
 
+    # Run Physical Stability & Breakage Check
+    stab = check_structural_stability(
+        pred_density=pred_density,
+        inp_np=input_tensor,
+        simp_density=simp_density,
+        threshold=threshold
+    )
+
     fig = plt.figure(figsize=(22, 9), dpi=160)
     gs = fig.add_gridspec(2, 3, height_ratios=[1.1, 1.0], hspace=0.32, wspace=0.20)
 
@@ -154,16 +163,25 @@ def visualize_comparison(input_tensor, simp_density, title, target_vf, model, de
     ax2.set_aspect('equal')
     ax2.axis('off')
 
-    # 4. Binarized Topology
+    # 4. Binarized Topology + Stability Verdict
     ax3 = fig.add_subplot(gs[1, 0])
     ax3.imshow(1.0 - bin_pred, cmap='gray', vmin=0, vmax=1,
                extent=[0, nelx, nely, 0], interpolation='nearest')
-    dice_str = f" | Dice = {dice:.3f}" if dice is not None else ""
-    ax3.set_title(rf"4. Binarized Truss ($\hat{{y}} \geq {threshold:.2f}$)" + "\n" +
-                  f"$V_f = {bin_vf:.3f}${dice_str}",
-                  fontsize=11, fontweight='bold', pad=8)
+    dice_str = f" | Dice={dice:.3f}" if dice is not None else ""
+    conn_str = "Connected" if stab['is_connected'] else "DISCONNECTED"
+    ax3.set_title(
+        rf"4. Binarized Truss ($\hat{{y}} \geq {threshold:.2f}$) [{stab['short_badge']}]" + "\n" +
+        f"$V_f={bin_vf:.3f}${dice_str} | FoS={stab['fos_yield']:.2f} | $\lambda_1$={stab['lambda_1']:.1f}",
+        fontsize=10.5, fontweight='bold', color=stab['badge_color'], pad=8
+    )
+    ax3.text(
+        nelx / 2.0, nely + 3.5,
+        f"Stability Check: {stab['status_badge']} | Load Path: {conn_str}",
+        ha='center', va='top', fontsize=9, fontweight='bold', color='white',
+        bbox=dict(boxstyle='round,pad=0.3', facecolor=stab['badge_color'], edgecolor='none', alpha=0.92)
+    )
     ax3.set_xlim(-5, nelx + 5)
-    ax3.set_ylim(nely + 5, -5)
+    ax3.set_ylim(nely + 10, -5)
     ax3.set_aspect('equal')
     ax3.axis('off')
 
@@ -203,18 +221,18 @@ def visualize_comparison(input_tensor, simp_density, title, target_vf, model, de
     ax5.legend(loc='upper center', fontsize=9, frameon=True)
     ax5.grid(True, linestyle=':', alpha=0.6)
 
-    dice_title = f" | Dice Score: {dice:.3f}" if dice is not None else ""
+    dice_title = f" | Dice: {dice:.3f}" if dice is not None else ""
     fig.suptitle(
         f"TopoUNet Engineering Inspection | {title} | "
-        f"Inference Latency: {latency_ms:.2f} ms | Target $V_f$: {target_vf:.2f} "
-        f"$\to$ Pred $V_f$: {pred_vf:.3f}{dice_title}",
-        fontsize=13, fontweight='bold', y=0.98
+        f"Latency: {latency_ms:.2f} ms | $V_f$: {target_vf:.2f}$\to${pred_vf:.3f}{dice_title} | "
+        f"Stability: {stab['short_badge']} (FoS={stab['fos_yield']:.2f}, λ₁={stab['lambda_1']:.1f})",
+        fontsize=12.5, fontweight='bold', y=0.98
     )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, bbox_inches='tight')
     plt.close()
-    print(f"[Comparison Visualizer] Saved: {os.path.abspath(output_path)}")
+    print(f"[Comparison Visualizer] Saved: {os.path.abspath(output_path)} | Verdict: {stab['status_badge']}")
     return output_path, latency_ms, dice
 
 

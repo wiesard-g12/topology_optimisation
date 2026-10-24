@@ -14,7 +14,7 @@ import matplotlib.patches as patches
 
 import torch
 from unet_model import TopoUNet
-from losses import compute_fea_compliance_ratio
+from losses import compute_fea_compliance_ratio, check_structural_stability, physics_aware_binarize
 from visualize_data import extract_discrete_loads, draw_loads, draw_domain_and_bcs
 
 
@@ -58,7 +58,7 @@ def evaluate_sample(sample_idx, dataset_path, model, device, threshold=0.35):
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
     pred_density = pred_tensor.squeeze().cpu().numpy()
-    bin_pred = (pred_density >= threshold).astype(float)
+    bin_pred = physics_aware_binarize(pred_density, input_tensor, threshold=threshold, polish_steps=2)
     bin_simp = (simp_density >= 0.5).astype(float)
 
     # Metrics
@@ -70,8 +70,16 @@ def evaluate_sample(sample_idx, dataset_path, model, device, threshold=0.35):
     bin_vf = float(np.mean(bin_pred))
     simp_vf = float(np.mean(simp_density))
 
-    # Real FEA compliance check
-    fea_ratio, c_pred, c_target = compute_fea_compliance_ratio(bin_pred, bin_simp, input_tensor)
+    # Full Physics Stability & Breakage Check (Connectivity + FEA Compliance + Yield FoS + Buckling)
+    stability = check_structural_stability(
+        pred_density=pred_density,
+        inp_np=input_tensor,
+        simp_density=simp_density,
+        threshold=threshold
+    )
+    fea_ratio = stability['fea_ratio']
+    c_pred = stability['c_pred']
+    c_target = stability['c_target']
 
     result = {
         'sample_idx': sample_idx,
@@ -91,7 +99,8 @@ def evaluate_sample(sample_idx, dataset_path, model, device, threshold=0.35):
         'c_pred': c_pred,
         'c_target': c_target,
         'fea_ratio': fea_ratio,
-        'dataset_compliance': simp_comp
+        'dataset_compliance': simp_comp,
+        'stability': stability
     }
     return result
 
@@ -142,15 +151,25 @@ def plot_single_case(res, output_path):
     ax2.set_aspect('equal')
     ax2.axis('off')
 
-    # 4. TopoUNet Binarized Truss
+    # 4. TopoUNet Binarized Truss + Stability & Breakage Verdict
+    stab = res['stability']
     ax3 = fig.add_subplot(gs[1, 0])
     ax3.imshow(1.0 - bin_pred, cmap='gray', vmin=0, vmax=1,
                extent=[0, nelx, nely, 0], interpolation='nearest')
-    ax3.set_title(rf"4. Binarized Truss ($\hat{{y}} \geq {res['threshold']:.2f}$)" + "\n" +
-                  f"Dice = {res['dice']:.3f} | Compliance $C = {res['c_pred']:.2f}$ (Ratio: {res['fea_ratio']:.2f})",
-                  fontsize=11, fontweight='bold', pad=8)
+    conn_str = "Connected" if stab['is_connected'] else "DISCONNECTED"
+    ax3.set_title(
+        rf"4. Binarized Truss ($\hat{{y}} \geq {res['threshold']:.2f}$) [{stab['short_badge']}]" + "\n" +
+        f"Dice={res['dice']:.3f} | Ratio={res['fea_ratio']:.2f}x | FoS={stab['fos_yield']:.2f} | $\lambda_1$={stab['lambda_1']:.1f}",
+        fontsize=10.5, fontweight='bold', color=stab['badge_color'], pad=8
+    )
+    ax3.text(
+        nelx / 2.0, nely + 3.5,
+        f"Stability Check: {stab['status_badge']} | Load Path: {conn_str}",
+        ha='center', va='top', fontsize=9, fontweight='bold', color='white',
+        bbox=dict(boxstyle='round,pad=0.3', facecolor=stab['badge_color'], edgecolor='none', alpha=0.92)
+    )
     ax3.set_xlim(-5, nelx + 5)
-    ax3.set_ylim(nely + 5, -5)
+    ax3.set_ylim(nely + 10, -5)
     ax3.set_aspect('equal')
     ax3.axis('off')
 
@@ -185,8 +204,9 @@ def plot_single_case(res, output_path):
 
     fig.suptitle(
         f"Real-Time TopoUNet vs Ground Truth SIMP | Validation Sample #{res['sample_idx']:03d} | "
-        f"Inference: {res['latency_ms']:.2f} ms | Dice: {res['dice']:.3f} | FEA Compliance Ratio: {res['fea_ratio']:.2f}",
-        fontsize=13, fontweight='bold', y=0.98
+        f"Inference: {res['latency_ms']:.2f} ms | Dice: {res['dice']:.3f} | Ratio: {res['fea_ratio']:.2f}x | "
+        f"Stability: {stab['short_badge']} (FoS={stab['fos_yield']:.2f}, λ₁={stab['lambda_1']:.1f})",
+        fontsize=12.5, fontweight='bold', y=0.98
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
@@ -254,11 +274,15 @@ def plot_side_by_side_summary(res1, res2, output_path):
         ax2.set_aspect('equal')
         ax2.axis('off')
 
-        # Col 3: TopoUNet Binarized Truss
+        # Col 3: TopoUNet Binarized Truss + Stability Check
+        stab = res['stability']
         ax3 = axes[row_idx, 3]
         ax3.imshow(1.0 - bin_p, cmap='gray', vmin=0, vmax=1, extent=[0, nelx, nely, 0])
-        ax3.set_title(rf"TopoUNet Truss ($\hat{{y}} \geq 0.35$)" + "\n" + f"Dice = {res['dice']:.3f} | Ratio: {res['fea_ratio']:.2f}",
-                      fontsize=11, fontweight='bold', pad=6)
+        ax3.set_title(
+            rf"TopoUNet Truss ($\hat{{y}} \geq 0.35$) [{stab['short_badge']}]" + "\n" +
+            f"Dice={res['dice']:.3f} | Ratio={res['fea_ratio']:.2f}x | FoS={stab['fos_yield']:.2f}",
+            fontsize=10.5, fontweight='bold', color=stab['badge_color'], pad=6
+        )
         ax3.set_xlim(-5, nelx + 5)
         ax3.set_ylim(nely + 5, -5)
         ax3.set_aspect('equal')
@@ -277,8 +301,8 @@ def plot_side_by_side_summary(res1, res2, output_path):
         cbar.set_label('Error', fontsize=8)
 
     fig.suptitle(
-        "Real-Time TopoUNet vs Ground Truth SIMP — Head-to-Head Engineering Evaluation\n"
-        "(Held-Out Validation Cases Evaluated with Real Checkpoint Weights & FEA Compliance)",
+        "Real-Time TopoUNet vs Ground Truth SIMP — Head-to-Head Engineering & Stability Evaluation\n"
+        "(Held-Out Validation Cases Evaluated with Real Checkpoint Weights, FEA Compliance & Breakage Check)",
         fontsize=14, fontweight='bold', y=0.99
     )
     plt.tight_layout(rect=[0, 0, 1, 0.95])
@@ -323,7 +347,12 @@ def main():
     print("  AUTHENTIC EVALUATION METRICS (TOPOUNET VS GROUND TRUTH SIMP)")
     print("=" * 75)
     for res in results:
+        stab = res['stability']
         print(f"SAMPLE #{res['sample_idx']}:")
+        print(f"  Stability Verdict:               {stab['status_badge']}")
+        print(f"  Load-to-Support Connected:       {stab['is_connected']} (Anchored Mass: {stab['anchored_mass_ratio']*100:.1f}%)")
+        print(f"  Yield Factor of Safety (FoS):    {stab['fos_yield']:.2f} (SIMP FoS: {stab['simp_fos']:.2f})")
+        print(f"  Buckling Multiplier (lambda_1):  {stab['lambda_1']:.2f} (SIMP lambda_1: {stab['simp_lambda_1']:.2f})")
         print(f"  Target Volume Fraction (Vf):     {res['target_vf']:.3f}")
         print(f"  SIMP Achieved Volume Fraction:   {res['simp_vf']:.3f}")
         print(f"  TopoUNet Predicted Volume Frac:  {res['pred_vf']:.3f} (Error: {abs(res['pred_vf'] - res['target_vf']):.4f})")

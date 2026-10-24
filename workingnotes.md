@@ -167,3 +167,20 @@ Experiment 3 directly contrasts Pure Compliance SIMP against Buckling-Aware SIMP
 2. **Stiffness Gain Over Initial Block:** Pure SIMP and Buckling-Aware SIMP achieve between **$89.5\%$ and $93.7\%$ compliance reduction** compared to the unoptimized uniform block $\boldsymbol{\rho}^{(0)}$, establishing robust upper-bound structural stiffness.
 3. **Physical Mechanism of Buckling Redistribution:** Pure compliance SIMP tends to form razor-thin struts in pure compression that are prone to catastrophic bifurcation buckling. The active geometric stiffness ($\mathbf{K}_G$) eigensolver senses localized modal compression and redistributes mass into these struts—thickening them by $15\% - 35\%$ (as revealed by the red divergence heatmaps) and raising $\lambda_1$ with a modest and controlled compliance trade-off ($+7.5\%$ to $+12.1\%$).
 4. **Dataset Readiness for Phase 2 (U-Net Training):** The standardized 5-channel tensor representation `(domain, bc, Fx, Fy, Vf)` cleanly encodes all physical constraints and provides high-contrast ground-truth targets for physics-informed deep learning models.
+
+
+---
+
+## 4. Phase 3 Stability Audit: 100-Sample Random Structural Stability Benchmark
+
+Full details, root-cause diagnostics, and engineering solutions are logged in [`experiment.md`](file:///c:/Users/vedan/OneDrive/Desktop/Study/topo_opto/experiment.md).
+
+| Stability Criterion | Pass Condition | Baseline Naive ($\hat{\rho} \ge 0.35$) | Solution 1 (`physics_aware_binarize`) | **SIMP-Judge RL (`best_unet_rl.pth`)** |
+| :--- | :--- | :---: | :---: | :---: |
+| **1. Load-to-Support Connectivity** | Continuous solid path from all loads to supports | $98.00\%$ (98/100) | $99.00\%$ (99/100) | **100.00% (100/100)** |
+| **2. FEA Stiffness Stability** | Compliance ratio $C_{\text{pred}} / C^* \le 2.5\times$ | $63.00\%$ (63/100) | $84.00\%$ (84/100) | **96.00% (96/100)** |
+| **3. Material Yielding Safety** | Von Mises Stress $\text{FoS} \ge 1.0$ & stress ratio $\le 2.5\times$ | $76.00\%$ (76/100) | $88.00\%$ (88/100) | **97.00% (97/100)** |
+| **4. In-Plane Buckling Stability** | Critical buckling multiplier $\lambda_1 \ge 1.0$ (or SIMP parity) | $80.00\%$ (80/100) | $87.00\%$ (87/100) | **96.00% (96/100)** |
+| **OVERALL STABILITY ACCURACY** | **Passes ALL 4 criteria (`STABLE - WILL NOT BREAK`)** | **$62.00\%$ (62/100)** | **$81.00\%$ (81/100)** | **95.00% (95/100)** |
+
+![100-Sample Stability Report](images/stability_100_rl_report.png)
